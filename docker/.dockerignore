@@ -1,0 +1,130 @@
+# Docker ignore file for Agent IA Cybersécurité
+# Évite de copier des fichiers inutiles dans l'image Docker
+
+# === ENVIRONNEMENTS VIRTUELS ===
+.venv/
+venv/
+env/
+.env/
+__pycache__/
+
+# === FICHIERS DE CONFIGURATION SENSIBLES ===
+.env
+.env.local
+.env.production
+*.key
+*.pem
+*.p12
+config/secrets/
+
+# === FICHIERS DE DÉVELOPPEMENT ===
+.git/
+.gitignore
+*.md
+README.md
+CHANGELOG.md
+LICENSE
+.editorconfig
+
+# === IDE ET ÉDITEURS ===
+.vscode/
+.idea/
+*.swp
+*.swo
+*.tmp
+.DS_Store
+Thumbs.db
+
+# === LOGS ET DONNÉES TEMPORAIRES ===
+logs/
+*.log
+data/scans/*
+data/reports/*
+data/scripts/*
+temp/
+tmp/
+
+# === BASE DE DONNÉES ===
+*.db
+*.sqlite
+*.sqlite3
+data/database/*.db
+
+# === TESTS ===
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+tests/test_data/*
+tests/fixtures/*
+
+# === DOCUMENTATION ===
+docs/
+*.pdf
+*.docx
+
+# === SAUVEGARDES ===
+*.backup
+*.bak
+*~
+
+# === FICHIERS DE BUILD ===
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# === CACHE PYTHON ===
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# === OUTILS DE DÉVELOPPEMENT ===
+.mypy_cache/
+.bandit
+.flake8
+.black
+.isort.cfg
+pyproject.toml
+
+# === DOCKER ===
+Dockerfile.dev
+docker-compose.dev.yml
+docker-compose.override.yml
+
+# === SCRIPTS DE DÉVELOPPEMENT ===
+scripts/dev/
+scripts/test/
+run_dev.sh
+debug.sh
+
+# === DONNÉES SENSIBLES ===
+secrets/
+certificates/
+keys/
+*.crt
+*.csr
+
+# === FICHIERS SYSTÈME ===
+.dockerignore
+.gitkeep
+
+# === RAPPORTS ET ANALYSES ===
+coverage.xml
+pytest.xml
+scan_results/
+vulnerability_reports/
+
+# === FICHIERS TEMPORAIRES NMAP ===
+*.nmap
+*.xml
+nmap_temp/
+
+# === RÉPERTOIRES OPTIONNELS À EXCLURE ===
+# Décommentez selon vos besoins :
+
+# api/ (si vous ne voulez pas l'API dans l'image)
+# docker/ (évite la récursion Docker-in-Docker)
+# examples/
+# benchmarks/
