@@ -69,6 +69,10 @@ class Config:
                 "wget", "curl", "git", "pip", "npm"
             ]
 
+    def get(self, key: str, default: Any = None) -> Any:
+        """Permet d'accéder aux attributs via une interface de type dictionnaire."""
+        return getattr(self, key, default)
+
 
 # === CONSTANTES GLOBALES ===
 
