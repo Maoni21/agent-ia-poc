@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import Dict, List, Any, Optional, Callable, Union
 from dataclasses import dataclass, asdict
 
-from config import get_config, DEFAULT_CONFIG
+from config import get_config
 from src.utils.logger import setup_logger
 from src.database.database import Database
 from .collector import Collector, ScanResult
@@ -832,8 +832,8 @@ class Supervisor:
 
         Returns:
             WorkflowResult: Résultats complets
-            """
-            workflow_id = await self.start_workflow(
+        """
+        workflow_id = await self.start_workflow(
             WorkflowType.FULL_WORKFLOW,
             target,
             {"scan_type": scan_type}
