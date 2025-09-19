@@ -991,9 +991,9 @@ def sanitize_command_input(command: str) -> str:
         return ""
 
     # Supprimer les caractères dangereux pour le shell
-    dangerous_chars = [';', '&', '|', '`', ', '(', ')', '{', '}', '[', ']', ' < ', ' > ']
+    dangerous_chars = [';', '&', '|', '`', '(', ')', '{', '}', '[', ']', '<', '>']
 
-                       cleaned = command
+    cleaned = command
     for char in dangerous_chars:
         cleaned = cleaned.replace(char, '')
 

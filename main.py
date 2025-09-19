@@ -23,14 +23,28 @@ import logging
 import sys
 import signal
 import os
+from importlib import import_module
 from pathlib import Path
 from typing import Optional, Dict, Any
-import uvicorn
+from typing import TYPE_CHECKING
 
 # Ajouter le répertoire src au PYTHONPATH
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
-from config import get_config, validate_config
+try:
+    from config import get_config, validate_config
+except ModuleNotFoundError as config_import_error:  # pragma: no cover - dépendance optionnelle
+    def _raise_config_error():
+        raise ModuleNotFoundError(
+            "Le module python-dotenv est requis pour charger la configuration. "
+            "Installez les dépendances via 'pip install -r requirements.txt'."
+        ) from config_import_error
+
+    def get_config(*args, **kwargs):  # type: ignore
+        _raise_config_error()
+
+    def validate_config(*args, **kwargs):  # type: ignore
+        _raise_config_error()
 from src import (
     print_application_banner,
     print_quick_start,
@@ -38,15 +52,57 @@ from src import (
     create_agent,
     ApplicationStatus
 )
-from src.core.supervisor import Supervisor, WorkflowType
-from src.api.main import create_app
-from src.utils.logger import setup_logger
+try:
+    from src.utils.logger import setup_logger
+except ImportError:  # pragma: no cover - fallback pour l'aide
+    def setup_logger(name: str) -> logging.Logger:
+        """Fallback minimal si le logger avancé n'est pas disponible."""
+
+        logger = logging.getLogger(name)
+        if not logger.handlers:
+            handler = logging.StreamHandler()
+            handler.setFormatter(logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
+            logger.addHandler(handler)
+        logger.setLevel(logging.INFO)
+        return logger
 
 # Configuration du logging principal
 logger = setup_logger(__name__)
 
+if TYPE_CHECKING:  # pragma: no cover - uniquement pour l'analyse statique
+    import uvicorn as _uvicorn_type
+    from src.core.supervisor import Supervisor as _SupervisorType, WorkflowType as _WorkflowType
+
+
+def _import_uvicorn():
+    """Import différé d'uvicorn uniquement lorsque nécessaire."""
+
+    try:
+        import uvicorn  # type: ignore
+    except ImportError as exc:  # pragma: no cover - dépendance optionnelle
+        raise ImportError(
+            "uvicorn est requis pour lancer l'API REST. "
+            "Installez-le avec 'pip install uvicorn'."
+        ) from exc
+
+    return uvicorn
+
+
+def _import_supervisor_components():
+    """Import différé des composants du superviseur."""
+
+    module = import_module("src.core.supervisor")
+    return module.Supervisor, module.WorkflowType
+
+
+def _import_create_app():
+    """Import différé de la création d'application FastAPI."""
+
+    module = import_module("src.api.main")
+    return module.create_app
+
 # Variables globales pour la gestion des signaux
-supervisor_instance: Optional[Supervisor] = None
+supervisor_instance: Optional["Supervisor"] = None
 api_server_process: Optional[Any] = None
 shutdown_event = asyncio.Event()
 
@@ -565,7 +621,10 @@ def handle_api_command(args) -> int:
         print(f"🚀 Lancement de l'API REST sur {args.host}:{args.port}")
 
         # Créer l'application FastAPI
-        app = create_app()
+        create_app_fn = _import_create_app()
+        app = create_app_fn()
+
+        uvicorn = _import_uvicorn()
 
         # Configuration uvicorn
         uvicorn_config = {
@@ -1004,6 +1063,8 @@ async def handle_generate_command(args) -> int:
     try:
         logger.info("🔧 Début de la génération de scripts")
 
+        _, WorkflowType = _import_supervisor_components()
+
         # Créer le superviseur
         global supervisor_instance
         supervisor_instance = create_agent()
@@ -1225,6 +1286,11 @@ def main_sync():
 
 if __name__ == "__main__":
     try:
+        if any(arg in ("-h", "--help") for arg in sys.argv[1:]):
+            parser = create_argument_parser()
+            parser.print_help()
+            sys.exit(0)
+
         # Vérifier les prérequis de base
         if not check_prerequisites():
             sys.exit(1)

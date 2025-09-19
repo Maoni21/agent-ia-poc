@@ -1,51 +1,68 @@
-"""
-Package principal src pour l'Agent IA de Cybersécurité
+"""Package principal src pour l'Agent IA de Cybersécurité."""
 
-Ce package contient tous les modules de l'application :
-- core : Modules principaux (Collector, Analyzer, Generator, Supervisor)
-- api : Interface REST avec FastAPI
-- database : Gestion de la base de données
-- utils : Utilitaires transversaux
+from __future__ import annotations
 
-Architecture globale :
-    Application (main.py)
-    ├── API REST (src.api)
-    ├── Core Modules (src.core)
-    │   ├── Supervisor (orchestrateur)
-    │   ├── Collector (scan vulnérabilités)
-    │   ├── Analyzer (analyse IA)
-    │   └── Generator (génération scripts)
-    ├── Database (src.database)
-    └── Utils (src.utils)
-"""
+from importlib import import_module
+from typing import TYPE_CHECKING, Any
 
-from .core import (
-    # Classes principales
-    Collector,
-    Analyzer,
-    Generator,
-    Supervisor,
+if TYPE_CHECKING:  # pragma: no cover - uniquement pour l'analyse statique
+    from .core import (
+        Collector,
+        Analyzer,
+        Generator,
+        Supervisor,
+        ScanResult,
+        AnalysisResult,
+        ScriptResult,
+        create_supervisor,
+        get_core_version,
+    )
+    from .database import Database, DatabaseError
+    from .utils.logger import setup_logger
+    from .utils.validators import validate_ip_address, validate_domain
 
-    # Modèles de données
-    ScanResult,
-    AnalysisResult,
-    ScriptResult,
 
-    # Fonctions utilitaires
-    create_supervisor,
-    get_core_version,
-)
+_LAZY_ATTRS: dict[str, tuple[str, str]] = {
+    # Modules core
+    "Collector": (".core", "Collector"),
+    "Analyzer": (".core", "Analyzer"),
+    "Generator": (".core", "Generator"),
+    "Supervisor": (".core", "Supervisor"),
+    "ScanResult": (".core", "ScanResult"),
+    "AnalysisResult": (".core", "AnalysisResult"),
+    "ScriptResult": (".core", "ScriptResult"),
+    "create_supervisor": (".core", "create_supervisor"),
+    "get_core_version": (".core", "get_core_version"),
 
-from .database import (
-    Database,
-    DatabaseError,
-)
+    # Base de données
+    "Database": (".database", "Database"),
+    "DatabaseError": (".database", "DatabaseError"),
 
-from .utils import (
-    setup_logger,
-    validate_ip_address,
-    validate_domain,
-)
+    # Utils
+    "setup_logger": (".utils.logger", "setup_logger"),
+    "validate_ip_address": (".utils.validators", "validate_ip_address"),
+    "validate_domain": (".utils.validators", "validate_domain"),
+}
+
+
+def _load_attr(name: str) -> Any:
+    """Charge dynamiquement un attribut depuis un sous-module."""
+
+    module_name, attr_name = _LAZY_ATTRS[name]
+    module = import_module(module_name, __name__)
+    attr = getattr(module, attr_name)
+    globals()[name] = attr
+    return attr
+
+
+def __getattr__(name: str) -> Any:
+    if name in _LAZY_ATTRS:
+        return _load_attr(name)
+    raise AttributeError(f"module '{__name__}' n'a pas d'attribut '{name}'")
+
+
+def __dir__() -> list[str]:
+    return sorted(list(globals().keys()) + list(_LAZY_ATTRS.keys()))
 
 # Version du package src
 __version__ = "1.0.0"
@@ -78,6 +95,10 @@ __all__ = [
     # Fonctions utilitaires
     "create_supervisor",
     "get_core_version",
+    "print_application_banner",
+    "print_quick_start",
+    "get_application_status",
+    "ApplicationStatus",
     "create_agent",
     "get_application_info",
     "validate_application_config",
@@ -239,7 +260,7 @@ def _validate_logging_config(config: dict) -> bool:
     return True
 
 
-def create_agent(config: dict = None) -> Supervisor:
+def create_agent(config: dict = None) -> "Supervisor":
     """
     Factory principal pour créer un agent complet
 
@@ -270,7 +291,8 @@ def create_agent(config: dict = None) -> Supervisor:
     validate_application_config(config)
 
     # Créer le superviseur (agent principal)
-    supervisor = create_supervisor(config.get("core", {}))
+    create_supervisor_fn = _load_attr("create_supervisor")
+    supervisor = create_supervisor_fn(config.get("core", {}))
 
     return supervisor
 
