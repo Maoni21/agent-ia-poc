@@ -443,7 +443,7 @@ async def metrics():
 if __name__ == "__main__":
     # Configuration pour le développement
     uvicorn.run(
-        "main:app",
+        app,
         host="0.0.0.0",
         port=8000,
         reload=True,
