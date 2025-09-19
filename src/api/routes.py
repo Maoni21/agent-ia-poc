@@ -16,7 +16,7 @@ import json
 from src.database.database import Database
 from src.core.supervisor import Supervisor
 from src.utils.logger import setup_logger
-from .main import get_database, get_supervisor, get_current_user
+from .dependencies import get_database, get_supervisor, get_current_user
 from .schemas import (
     ScanRequest,
     ScanResponse,

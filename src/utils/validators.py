@@ -125,6 +125,38 @@ def validate_ip_address(ip_str: str, allow_private: bool = True) -> bool:
         return False
 
 
+def validate_ipv4_address(ip_str: str, allow_private: bool = True) -> bool:
+    """Valide spécifiquement une adresse IPv4."""
+    if not ip_str or not isinstance(ip_str, str):
+        return False
+
+    try:
+        ip = ipaddress.IPv4Address(ip_str.strip())
+        if not allow_private and ip.is_private:
+            logger.debug(f"Adresse IPv4 privée non autorisée: {ip_str}")
+            return False
+        return True
+    except ipaddress.AddressValueError as e:
+        logger.debug(f"Adresse IPv4 invalide '{ip_str}': {e}")
+        return False
+
+
+def validate_ipv6_address(ip_str: str, allow_private: bool = True) -> bool:
+    """Valide spécifiquement une adresse IPv6."""
+    if not ip_str or not isinstance(ip_str, str):
+        return False
+
+    try:
+        ip = ipaddress.IPv6Address(ip_str.strip())
+        if not allow_private and ip.is_private:
+            logger.debug(f"Adresse IPv6 privée non autorisée: {ip_str}")
+            return False
+        return True
+    except ipaddress.AddressValueError as e:
+        logger.debug(f"Adresse IPv6 invalide '{ip_str}': {e}")
+        return False
+
+
 def validate_ip_range(ip_range: str) -> Tuple[bool, Optional[str]]:
     """
     Valide une plage d'adresses IP (CIDR)
@@ -152,6 +184,11 @@ def validate_ip_range(ip_range: str) -> Tuple[bool, Optional[str]]:
 
     except ValueError as e:
         return False, f"Plage IP invalide: {str(e)}"
+
+
+def validate_cidr(cidr: str) -> Tuple[bool, Optional[str]]:
+    """Alias pour la validation de plages CIDR."""
+    return validate_ip_range(cidr)
 
 
 def is_ip_in_private_ranges(ip_str: str) -> bool:
@@ -219,6 +256,14 @@ def validate_domain(domain: str, check_dns: bool = False) -> bool:
             return False
 
     return True
+
+
+def validate_email(email: str) -> bool:
+    """Valide une adresse email simple."""
+    if not email or not isinstance(email, str):
+        return False
+
+    return bool(re.match(PATTERNS['email'], email.strip()))
 
 
 def validate_hostname(hostname: str) -> bool:
@@ -483,6 +528,11 @@ def validate_file_size(file_path: str, file_type: str = None, max_size: int = No
         return False, f"Erreur d'accès au fichier: {str(e)}"
 
 
+def validate_path(file_path: str, must_exist: bool = False) -> Tuple[bool, Optional[str]]:
+    """Alias simple pour la validation de chemin."""
+    return validate_file_path(file_path, must_exist=must_exist)
+
+
 # === VALIDATION DE DONNÉES MÉTIER ===
 
 def validate_cve_id(cve_id: str) -> bool:
@@ -499,6 +549,21 @@ def validate_cve_id(cve_id: str) -> bool:
         return False
 
     return bool(re.match(PATTERNS['cve_id'], cve_id.strip()))
+
+
+def validate_hash(hash_str: str, allowed_lengths: Optional[List[int]] = None) -> bool:
+    """Valide un hash hexadécimal (md5, sha1, sha256, etc.)."""
+    if not hash_str or not isinstance(hash_str, str):
+        return False
+
+    cleaned = hash_str.strip()
+    if not re.fullmatch(r"[0-9a-fA-F]+", cleaned):
+        return False
+
+    if allowed_lengths and len(cleaned) not in allowed_lengths:
+        return False
+
+    return True
 
 
 def validate_severity_level(severity: str) -> bool:
@@ -840,6 +905,12 @@ def validate_bash_syntax(script_content: str) -> Tuple[bool, Optional[str]]:
 
 # === VALIDATION DE DONNÉES JSON ===
 
+def validate_json(json_str: str, required_keys: Optional[List[str]] = None) -> bool:
+    """Valide rapidement qu'une chaîne est un JSON valide."""
+    is_valid, _, _ = validate_json_data(json_str, required_keys=required_keys)
+    return is_valid
+
+
 def validate_json_data(json_str: str, required_keys: List[str] = None) -> Tuple[bool, Optional[str], Optional[Dict]]:
     """
     Valide des données JSON
@@ -991,9 +1062,9 @@ def sanitize_command_input(command: str) -> str:
         return ""
 
     # Supprimer les caractères dangereux pour le shell
-    dangerous_chars = [';', '&', '|', '`', ', '(', ')', '{', '}', '[', ']', ' < ', ' > ']
+    dangerous_chars = [';', '&', '|', '`', ',', '(', ')', '{', '}', '[', ']', '<', '>']
 
-                       cleaned = command
+    cleaned = command
     for char in dangerous_chars:
         cleaned = cleaned.replace(char, '')
 
@@ -1333,6 +1404,46 @@ class ConfigValidator:
                 errors.append(f"{field_path} trop d'éléments (max: {max_items})")
 
         return errors
+
+
+class NetworkValidator:
+    """Utilitaires de validation réseau."""
+
+    @staticmethod
+    def validate_ip(ip: str, allow_private: bool = True) -> bool:
+        return validate_ip_address(ip, allow_private=allow_private)
+
+    @staticmethod
+    def validate_domain_name(domain: str, check_dns: bool = False) -> bool:
+        return validate_domain(domain, check_dns=check_dns)
+
+    @staticmethod
+    def validate_port_number(port: Union[int, str], allow_privileged: bool = True) -> bool:
+        return validate_port(port, allow_privileged=allow_privileged)
+
+
+class SecurityValidator:
+    """Utilitaires de validation pour les données sensibles."""
+
+    @staticmethod
+    def validate_hash_value(value: str, allowed_lengths: Optional[List[int]] = None) -> bool:
+        return validate_hash(value, allowed_lengths=allowed_lengths)
+
+    @staticmethod
+    def sanitize_command(command: str) -> str:
+        return sanitize_command_input(command)
+
+
+class DataValidator:
+    """Utilitaires de validation générique pour les données."""
+
+    @staticmethod
+    def validate_json_string(data: str, required_keys: Optional[List[str]] = None) -> bool:
+        return validate_json(data, required_keys=required_keys)
+
+    @staticmethod
+    def validate_email_address(email: str) -> bool:
+        return validate_email(email)
 
 
 # === TESTS ET EXEMPLES ===

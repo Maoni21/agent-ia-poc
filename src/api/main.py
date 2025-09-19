@@ -5,16 +5,12 @@ Ce module contient la configuration et l'initialisation de l'application FastAPI
 qui expose l'API REST pour interagir avec l'agent IA de cybersécurité.
 """
 
-import logging
 import time
 from contextlib import asynccontextmanager
-from typing import Dict, Any
-
-from fastapi import FastAPI, Request, HTTPException, Depends
+from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.openapi.utils import get_openapi
 import uvicorn
 
@@ -22,7 +18,6 @@ from config import get_config, LOG_LEVEL
 from src.database.database import Database
 from src.utils.logger import setup_logger
 from src.core.supervisor import Supervisor
-from .routes import router
 from . import (
     API_CONFIG,
     MIDDLEWARE_CONFIG,
@@ -30,17 +25,12 @@ from . import (
     ERROR_MESSAGES,
     API_TAGS
 )
+from . import dependencies
+from .dependencies import get_database, get_supervisor, get_current_user
+from .routes import router
 
 # Configuration du logging
 logger = setup_logger(__name__)
-
-# Instance globale du superviseur
-supervisor_instance: Supervisor = None
-database_instance: Database = None
-
-# Sécurité (optionnel)
-security = HTTPBearer(auto_error=False)
-
 
 # === GESTION DU CYCLE DE VIE DE L'APPLICATION ===
 
@@ -59,14 +49,12 @@ async def lifespan(app: FastAPI):
         logger.info(f"Configuration chargée: {config.openai_model}")
 
         # Initialiser la base de données
-        global database_instance
-        database_instance = Database()
-        database_instance.create_tables()
+        dependencies.database_instance = Database()
+        dependencies.database_instance.create_tables()
         logger.info("✅ Base de données initialisée")
 
         # Initialiser le superviseur
-        global supervisor_instance
-        supervisor_instance = Supervisor()
+        dependencies.supervisor_instance = Supervisor()
         logger.info("✅ Superviseur initialisé")
 
         # Vérifications de santé
@@ -86,12 +74,14 @@ async def lifespan(app: FastAPI):
 
     try:
         # Nettoyage des ressources
-        if supervisor_instance:
-            await supervisor_instance.shutdown()
+        if dependencies.supervisor_instance:
+            await dependencies.supervisor_instance.shutdown()
+            dependencies.supervisor_instance = None
             logger.info("✅ Superviseur arrêté")
 
-        if database_instance:
-            database_instance.close()
+        if dependencies.database_instance:
+            dependencies.database_instance.close()
+            dependencies.database_instance = None
             logger.info("✅ Base de données fermée")
 
     except Exception as e:
@@ -107,7 +97,7 @@ async def health_checks():
 
     # Vérifier la base de données
     try:
-        database_instance.get_connection()
+        get_database().get_connection()
         logger.info("✅ Connexion base de données OK")
     except Exception as e:
         logger.error(f"❌ Base de données indisponible: {e}")
@@ -302,62 +292,6 @@ def setup_openapi(app: FastAPI):
         return app.openapi_schema
 
     app.openapi = custom_openapi
-
-
-# === DÉPENDANCES ===
-
-def get_database() -> Database:
-    """Dépendance pour obtenir l'instance de base de données"""
-    if database_instance is None:
-        raise HTTPException(
-            status_code=500,
-            detail="Base de données non initialisée"
-        )
-    return database_instance
-
-
-def get_supervisor() -> Supervisor:
-    """Dépendance pour obtenir l'instance du superviseur"""
-    if supervisor_instance is None:
-        raise HTTPException(
-            status_code=500,
-            detail="Superviseur non initialisé"
-        )
-    return supervisor_instance
-
-
-async def get_current_user(
-        credentials: HTTPAuthorizationCredentials = Depends(security)
-) -> Dict[str, Any]:
-    """
-    Dépendance pour l'authentification (optionnel)
-
-    Args:
-        credentials: Informations d'authentification
-
-    Returns:
-        Dict contenant les infos utilisateur
-
-    Raises:
-        HTTPException: Si l'authentification échoue
-    """
-    # Pour l'instant, on accepte toutes les requêtes
-    # TODO: Implémenter une vraie authentification JWT
-
-    if credentials is None:
-        # Pas d'authentification requise pour le PoC
-        return {"user_id": "anonymous", "role": "user"}
-
-    # Validation basique du token
-    token = credentials.credentials
-    if not token:
-        raise HTTPException(
-            status_code=401,
-            detail="Token manquant"
-        )
-
-    # TODO: Valider le JWT token
-    return {"user_id": "authenticated", "role": "user"}
 
 
 # === CRÉATION DE L'INSTANCE GLOBALE ===
