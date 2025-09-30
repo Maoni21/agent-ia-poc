@@ -1401,7 +1401,7 @@ def create_supervisor(config: Optional[Dict[str, Any]] = None) -> Supervisor:
         config: Configuration personnalisée
 
     Returns:
-        Supervisor: Instance configurée
+        Supervisor: Instance confiurée
     """
     return Supervisor(config)
 
