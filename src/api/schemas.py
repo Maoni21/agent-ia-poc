@@ -8,7 +8,7 @@ des requêtes et réponses de l'API REST.
 from datetime import datetime
 from enum import Enum
 from typing import List, Optional, Dict, Any, Union
-from pydantic import BaseModel, Field, validator, root_validator
+from pydantic import BaseModel, Field, validator, model_validator
 import re
 
 
@@ -136,7 +136,7 @@ class ScanRequest(BaseModel):
         return v
 
     class Config:
-        schema_extra = {
+        json_json_schema_extra = {
             "example": {
                 "target": "192.168.1.100",
                 "scan_type": "full",
@@ -179,7 +179,7 @@ class ScanResultModel(BaseModel):
     nmap_version: Optional[str] = Field(None, description="Version Nmap utilisée")
 
     class Config:
-        schema_extra = {
+        json_json_schema_extra = {
             "example": {
                 "scan_id": "550e8400-e29b-41d4-a716-446655440000",
                 "target": "192.168.1.100",
@@ -229,7 +229,7 @@ class VulnerabilityModel(BaseModel):
     priority_score: Optional[int] = Field(None, description="Score de priorité", ge=1, le=10)
 
     class Config:
-        schema_extra = {
+        json_json_schema_extra = {
             "example": {
                 "id": "vuln_001",
                 "name": "Apache HTTP Server Remote Code Execution",
@@ -272,7 +272,7 @@ class AnalysisRequest(BaseModel):
         return v
 
     class Config:
-        schema_extra = {
+        json_json_schema_extra = {
             "example": {
                 "vulnerabilities_data": [
                     {
@@ -325,7 +325,7 @@ class ScriptGenerationRequest(BaseModel):
         return v.lower()
 
     class Config:
-        schema_extra = {
+        json_json_schema_extra = {
             "example": {
                 "vulnerability_id": "vuln_001",
                 "target_system": "ubuntu",
@@ -358,7 +358,7 @@ class ScriptModel(BaseModel):
     validated_at: Optional[datetime] = Field(None)
 
     class Config:
-        schema_extra = {
+        json_json_schema_extra = {
             "example": {
                 "script_id": "script_001",
                 "vulnerability_id": "vuln_001",
@@ -403,7 +403,7 @@ class ReportRequest(BaseModel):
     company_name: Optional[str] = Field(None, description="Nom de l'entreprise")
     industry: Optional[str] = Field(None, description="Secteur d'activité")
 
-    @root_validator
+    @model_validator(mode='after')
     def validate_report_requirements(cls, values):
         """Valider que les données nécessaires sont fournies"""
         report_type = values.get('report_type')
@@ -417,7 +417,7 @@ class ReportRequest(BaseModel):
         return values
 
     class Config:
-        schema_extra = {
+        json_json_schema_extra = {
             "example": {
                 "report_type": "technical",
                 "format": "pdf",

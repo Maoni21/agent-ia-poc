@@ -18,7 +18,7 @@ from config import get_config, LOG_LEVEL
 from src.database.database import Database
 from src.utils.logger import setup_logger
 from src.core.supervisor import Supervisor
-from . import (
+from .config import (
     API_CONFIG,
     MIDDLEWARE_CONFIG,
     APIErrorCodes,

@@ -34,7 +34,7 @@ from src.database.database import Database
 from .collector import Collector, ScanResult
 from .analyzer import Analyzer, AnalysisResult
 from .generator import Generator, ScriptResult
-from . import SupervisorException, CoreErrorCodes, ERROR_MESSAGES, TASK_STATUS, OPERATION_TYPES
+from .exceptions import SupervisorException, CoreErrorCodes, ERROR_MESSAGES, TASK_STATUS, OPERATION_TYPES
 
 # Configuration du logging
 logger = setup_logger(__name__)

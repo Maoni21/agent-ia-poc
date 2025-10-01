@@ -34,7 +34,7 @@ from config.prompts import (
 )
 from src.utils.logger import setup_logger
 from src.database.database import Database
-from . import AnalyzerException, CoreErrorCodes, ERROR_MESSAGES
+from .exceptions import AnalyzerException, CoreErrorCodes, ERROR_MESSAGES
 
 # Configuration du logging
 logger = setup_logger(__name__)

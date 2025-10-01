@@ -552,56 +552,35 @@ async def handle_full_workflow_command(args) -> int:
 
 
 def handle_api_command(args) -> int:
-    """
-    Lance l'interface API REST
-
-    Args:
-        args: Arguments parsés
-
-    Returns:
-        int: Code de retour
-    """
+    """Lance l'interface API REST"""
     try:
         print(f"🚀 Lancement de l'API REST sur {args.host}:{args.port}")
-
-        # Créer l'application FastAPI
-        app = create_app()
-
-        # Configuration uvicorn
-        uvicorn_config = {
-            "app": app,
-            "host": args.host,
-            "port": args.port,
-            "log_level": args.log_level.lower(),
-            "access_log": not args.quiet,
-        }
-
-        # Mode développement
-        if args.dev or args.reload:
-            uvicorn_config.update({
-                "reload": True,
-                "reload_dirs": ["src", "config"],
-                "log_level": "debug"
-            })
-
         print(f"📚 Documentation API: http://{args.host}:{args.port}/docs")
         print(f"🔄 Alternative ReDoc: http://{args.host}:{args.port}/redoc")
         print(f"🏥 Health Check: http://{args.host}:{args.port}/health")
+        print("🛑 Arrêt: Ctrl+C")
 
-        if not args.quiet:
-            print(f"🛑 Arrêt: Ctrl+C")
+        # Importer et créer l'app directement
+        from src.api.main import create_app
+        app = create_app()
 
-        # Lancer le serveur
-        uvicorn.run(**uvicorn_config)
+        # Lancer uvicorn simplement sans asyncio
+        uvicorn.run(
+            app,
+            host=args.host,
+            port=args.port,
+            log_level=args.log_level.lower() if hasattr(args, 'log_level') else "info",
+            reload=args.dev or args.reload if hasattr(args, 'dev') else False
+        )
 
         return 0
 
     except KeyboardInterrupt:
-        print("\n🛑 Arrêt de l'API demandé par l'utilisateur")
+        print("\n🛑 Arrêt de l'API demandé")
         return 0
     except Exception as e:
-        logger.error(f"Erreur lors du lancement de l'API: {e}")
-        print(f"❌ Erreur API: {e}", file=sys.stderr)
+        logger.error(f"Erreur API: {e}")
+        print(f"❌ Erreur API: {e}")
         return 1
 
 
@@ -1220,7 +1199,19 @@ def check_prerequisites() -> bool:
 
 def main_sync():
     """Point d'entrée synchrone pour les cas non-async"""
-    return asyncio.run(main())
+    # Détection du mode API pour éviter le conflit asyncio
+    if '--api' in sys.argv:
+        # Mode API : lancer directement sans asyncio
+        parser = create_argument_parser()
+        args = parser.parse_args()
+        configure_logging(args)
+        if not args.quiet:
+            print_application_banner()
+        validate_arguments(args)
+        return handle_api_command(args)
+    else:
+        # Autres modes : utiliser asyncio normalement
+        return asyncio.run(main())
 
 
 if __name__ == "__main__":

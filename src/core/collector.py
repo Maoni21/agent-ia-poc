@@ -34,7 +34,7 @@ from config import get_config, get_nmap_config, VULNERABILITY_DB_PATH
 from src.utils.logger import setup_logger
 from src.utils.validators import validate_ip_address, validate_domain
 from src.database.database import Database
-from . import CollectorException, CoreErrorCodes, ERROR_MESSAGES
+from .exceptions import CollectorException, CoreErrorCodes, ERROR_MESSAGES
 
 # Configuration du logging
 logger = setup_logger(__name__)
@@ -390,9 +390,7 @@ class Collector:
                 # Exécuter le scan
                 self.nm.scan(
                     hosts=target,
-                    arguments=nmap_args,
-                    sudo=False,  # Éviter sudo pour la sécurité
-                    callback=nmap_progress
+                    arguments=nmap_args
                 )
 
                 return self.nm.all_hosts()

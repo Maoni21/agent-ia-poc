@@ -26,7 +26,7 @@
 python-nmap==0.7.1
 # Interface Python pour Nmap - scan de ports et détection de vulnérabilités
 
-nmap==0.0.1
+python-nmap>=0.7.1
 # Wrapper Python pour Nmap (backup)
 
 # Intelligence Artificielle et LLM
@@ -135,7 +135,7 @@ bleach>=6.1.0
 # ================================================================================
 
 # Réseau et adressage IP
-ipaddress>=1.0.23
+# ipaddress (intégré à Python 3.3+)
 # Manipulation d'adresses IP et réseaux
 
 netaddr>=0.10.1
@@ -194,7 +194,7 @@ toml>=0.10.2
 # ================================================================================
 
 # Utilitaires Python
-pathlib2>=2.3.7
+# pathlib2 (intégré à Python 3.4+)
 # Extensions pathlib pour compatibilité
 
 uuid>=1.30

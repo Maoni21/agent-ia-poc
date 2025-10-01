@@ -207,8 +207,15 @@ async def get_scan_results(
             detail="Scan non terminé"
         )
 
-    # TODO: Récupérer les résultats depuis la base de données
-    results = task.get("results", {})
+    # Récupérer les résultats
+    results = task.get("results")
+
+    # Vérifier que les résultats existent
+    if results is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Scan terminé mais résultats non disponibles"
+        )
 
     return {
         "scan_id": scan_id,
@@ -219,7 +226,6 @@ async def get_scan_results(
         "services": results.get("services", []),
         "open_ports": results.get("open_ports", []),
     }
-
 
 @router.get("/scans", response_model=List[Dict[str, Any]], tags=["scans"])
 async def list_scans(
