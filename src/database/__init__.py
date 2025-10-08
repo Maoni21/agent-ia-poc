@@ -1,34 +1,27 @@
 """
-Package database pour l'Agent IA de Cybersécurité
+Package database - Gestion de la persistance
 """
 
-# Importer TOUT depuis exceptions.py d'abord
-from .exceptions import (
-    DatabaseError,
-    ConnectionError,
-    MigrationError,
-    ValidationError,
-    IntegrityError,
-    DatabaseErrorCodes,
-    DEFAULT_DATABASE_CONFIG,
-    ERROR_MESSAGES,
-)
+# === EXCEPTIONS ===
 
-# Maintenant Database peut importer sans problème
+class DatabaseError(Exception):
+    """Exception de base pour les erreurs de base de données"""
+    pass
+
+
+class ConnectionError(DatabaseError):
+    """Erreur de connexion à la base de données"""
+    pass
+
+
+# === IMPORTS ===
+
 from .database import Database
 
-# Version du package
 __version__ = "1.0.0"
 
-# Exports complets
 __all__ = [
     "Database",
     "DatabaseError",
     "ConnectionError",
-    "MigrationError",
-    "ValidationError",
-    "IntegrityError",
-    "DatabaseErrorCodes",
-    "DEFAULT_DATABASE_CONFIG",
-    "ERROR_MESSAGES",
 ]

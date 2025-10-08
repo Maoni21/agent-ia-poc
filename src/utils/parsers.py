@@ -446,214 +446,214 @@ class NmapParser:
 
 # === PARSERS OPENVAS ===
 
-class OpenVASParser:
-    """Parser pour les rapports OpenVAS XML"""
-
-    @staticmethod
-    def parse_xml(xml_content: Union[str, Path]) -> ParseResult:
-        """
-        Parse un rapport OpenVAS XML
-
-        Args:
-            xml_content: Contenu XML ou chemin vers le fichier
-
-        Returns:
-            ParseResult: Résultats parsés
-        """
-        try:
-            # Lire le fichier si nécessaire
-            if isinstance(xml_content, (str, Path)) and Path(xml_content).exists():
-                with open(xml_content, 'r', encoding='utf-8') as f:
-                    xml_content = f.read()
-                    source_file = str(xml_content)
-            else:
-                source_file = "string_input"
-
-            root = ET.fromstring(xml_content)
-
-            # Extraire les informations du rapport
-            scan_info = OpenVASParser._extract_scan_info(root)
-
-            # Grouper les résultats par hôte
-            hosts_data = {}
-
-            for result in root.findall('.//result'):
-                host_ip = OpenVASParser._get_host_ip(result)
-                if not host_ip:
-                    continue
-
-                if host_ip not in hosts_data:
-                    hosts_data[host_ip] = {
-                        'vulnerabilities': [],
-                        'services': set(),
-                        'ports': set()
-                    }
-
-                vuln = OpenVASParser._parse_result(result)
-                if vuln:
-                    hosts_data[host_ip]['vulnerabilities'].append(vuln)
-                    hosts_data[host_ip]['ports'].add(vuln.affected_port)
-                    hosts_data[host_ip]['services'].add(vuln.affected_service)
-
-            # Créer les objets ParsedHost
-            hosts = []
-            for host_ip, data in hosts_data.items():
-                host = ParsedHost(
-                    ip=host_ip,
-                    hostname=None,  # OpenVAS ne fournit pas toujours le hostname
-                    mac_address=None,
-                    os_info=None,
-                    status='up',
-                    open_ports=list(data['ports']),
-                    services=[{'service': s, 'port': 0} for s in data['services']],
-                    vulnerabilities=data['vulnerabilities']
-                )
-                hosts.append(host)
-
-            result = ParseResult(
-                source_type="openvas_xml",
-                source_file=source_file,
-                parsed_at=datetime.utcnow(),
-                hosts=hosts,
-                scan_info=scan_info,
-                total_hosts=len(hosts),
-                total_vulnerabilities=sum(len(h.vulnerabilities) for h in hosts)
-            )
-
-            logger.info(f"OpenVAS XML parsé: {len(hosts)} hôtes, {result.total_vulnerabilities} vulnérabilités")
-            return result
-
-        except ET.ParseError as e:
-            logger.error(f"Erreur parsing XML OpenVAS: {e}")
-            raise ValueError(f"XML OpenVAS invalide: {e}")
-        except Exception as e:
-            logger.error(f"Erreur inattendue parsing OpenVAS: {e}")
-            raise
-
-    @staticmethod
-    def _extract_scan_info(root: ET.Element) -> Dict[str, Any]:
-        """Extrait les informations générales du scan OpenVAS"""
-        scan_info = {'scanner': 'openvas'}
-
-        # Informations du rapport
-        report = root.find('.//report')
-        if report is not None:
-            scan_info['report_id'] = report.get('id', '')
-            scan_info['format_id'] = report.get('format_id', '')
-
-        # Date de création
-        creation_time = root.find('.//creation_time')
-        if creation_time is not None:
-            scan_info['creation_time'] = creation_time.text
-
-        # Tâche associée
-        task = root.find('.//task')
-        if task is not None:
-            scan_info['task_name'] = task.find('name').text if task.find('name') is not None else ''
-
-        return scan_info
-
-    @staticmethod
-    def _get_host_ip(result: ET.Element) -> Optional[str]:
-        """Extrait l'IP de l'hôte depuis un résultat"""
-        host = result.find('host')
-        if host is not None:
-            ip = host.text
-            if validate_ip_address(ip):
-                return ip
-        return None
-
-    @staticmethod
-    def _parse_result(result: ET.Element) -> Optional[ParsedVulnerability]:
-        """Parse un élément result OpenVAS"""
-        try:
-            # ID du NVT
-            nvt = result.find('nvt')
-            if nvt is None:
-                return None
-
-            nvt_id = nvt.get('oid', '')
-
-            # Nom de la vulnérabilité
-            name_elem = nvt.find('name')
-            name = name_elem.text if name_elem is not None else 'Unknown Vulnerability'
-
-            # Sévérité et CVSS
-            threat_elem = result.find('threat')
-            threat = threat_elem.text if threat_elem is not None else 'Log'
-
-            severity_elem = result.find('severity')
-            cvss_score = None
-            if severity_elem is not None:
-                try:
-                    cvss_score = float(severity_elem.text)
-                except (ValueError, TypeError):
-                    pass
-
-            # Description
-            description_elem = result.find('description')
-            description = description_elem.text if description_elem is not None else ''
-
-            # Port
-            port_elem = result.find('port')
-            port_str = port_elem.text if port_elem is not None else '0'
-
-            # Extraire le numéro de port
-            port_match = re.search(r'(\d+)/', port_str)
-            port = int(port_match.group(1)) if port_match else 0
-
-            # Service
-            service = 'unknown'
-            if '/' in port_str:
-                service = port_str.split('/')[1]
-
-            # CVEs
-            cves = []
-            refs_elem = nvt.find('refs')
-            if refs_elem is not None:
-                for ref in refs_elem.findall('ref'):
-                    if ref.get('type') == 'cve':
-                        cves.append(ref.get('id', ''))
-
-            # Solution
-            solution_elem = nvt.find('solution')
-            solution = solution_elem.text if solution_elem is not None else None
-
-            # Mapping de sévérité OpenVAS -> Standard
-            severity_map = {
-                'High': 'HIGH',
-                'Medium': 'MEDIUM',
-                'Low': 'LOW',
-                'Log': 'INFO',
-                'Debug': 'INFO'
-            }
-
-            severity = severity_map.get(threat, 'LOW')
-            if cvss_score and cvss_score >= 9.0:
-                severity = 'CRITICAL'
-
-            return ParsedVulnerability(
-                id=nvt_id,
-                name=name,
-                severity=severity,
-                cvss_score=cvss_score,
-                description=description[:500],  # Limiter la taille
-                affected_service=service,
-                affected_port=port,
-                cve_ids=cves,
-                references=[],
-                solution=solution,
-                risk_factor=threat
-            )
-
-        except Exception as e:
-            logger.warning(f"Erreur parsing résultat OpenVAS: {e}")
-            return None
-
-
-# === PARSERS TENABLE ===
-
-class TenableParser:
+# class OpenVASParser:
+#     """Parser pour les rapports OpenVAS XML"""
+# 
+#     @staticmethod
+#     def parse_xml(xml_content: Union[str, Path]) -> ParseResult:
+#         """
+#         Parse un rapport OpenVAS XML
+# 
+#         Args:
+#             xml_content: Contenu XML ou chemin vers le fichier
+# 
+#         Returns:
+#             ParseResult: Résultats parsés
+#         """
+#         try:
+#             # Lire le fichier si nécessaire
+#             if isinstance(xml_content, (str, Path)) and Path(xml_content).exists():
+#                 with open(xml_content, 'r', encoding='utf-8') as f:
+#                     xml_content = f.read()
+#                     source_file = str(xml_content)
+#             else:
+#                 source_file = "string_input"
+# 
+#             root = ET.fromstring(xml_content)
+# 
+#             # Extraire les informations du rapport
+#             scan_info = OpenVASParser._extract_scan_info(root)
+# 
+#             # Grouper les résultats par hôte
+#             hosts_data = {}
+# 
+#             for result in root.findall('.//result'):
+#                 host_ip = OpenVASParser._get_host_ip(result)
+#                 if not host_ip:
+#                     continue
+# 
+#                 if host_ip not in hosts_data:
+#                     hosts_data[host_ip] = {
+#                         'vulnerabilities': [],
+#                         'services': set(),
+#                         'ports': set()
+#                     }
+# 
+#                 vuln = OpenVASParser._parse_result(result)
+#                 if vuln:
+#                     hosts_data[host_ip]['vulnerabilities'].append(vuln)
+#                     hosts_data[host_ip]['ports'].add(vuln.affected_port)
+#                     hosts_data[host_ip]['services'].add(vuln.affected_service)
+# 
+#             # Créer les objets ParsedHost
+#             hosts = []
+#             for host_ip, data in hosts_data.items():
+#                 host = ParsedHost(
+#                     ip=host_ip,
+#                     hostname=None,  # OpenVAS ne fournit pas toujours le hostname
+#                     mac_address=None,
+#                     os_info=None,
+#                     status='up',
+#                     open_ports=list(data['ports']),
+#                     services=[{'service': s, 'port': 0} for s in data['services']],
+#                     vulnerabilities=data['vulnerabilities']
+#                 )
+#                 hosts.append(host)
+# 
+#             result = ParseResult(
+#                 source_type="openvas_xml",
+#                 source_file=source_file,
+#                 parsed_at=datetime.utcnow(),
+#                 hosts=hosts,
+#                 scan_info=scan_info,
+#                 total_hosts=len(hosts),
+#                 total_vulnerabilities=sum(len(h.vulnerabilities) for h in hosts)
+#             )
+# 
+#             logger.info(f"OpenVAS XML parsé: {len(hosts)} hôtes, {result.total_vulnerabilities} vulnérabilités")
+#             return result
+# 
+#         except ET.ParseError as e:
+#             logger.error(f"Erreur parsing XML OpenVAS: {e}")
+#             raise ValueError(f"XML OpenVAS invalide: {e}")
+#         except Exception as e:
+#             logger.error(f"Erreur inattendue parsing OpenVAS: {e}")
+#             raise
+# 
+#     @staticmethod
+#     def _extract_scan_info(root: ET.Element) -> Dict[str, Any]:
+#         """Extrait les informations générales du scan OpenVAS"""
+#         scan_info = {'scanner': 'openvas'}
+# 
+#         # Informations du rapport
+#         report = root.find('.//report')
+#         if report is not None:
+#             scan_info['report_id'] = report.get('id', '')
+#             scan_info['format_id'] = report.get('format_id', '')
+# 
+#         # Date de création
+#         creation_time = root.find('.//creation_time')
+#         if creation_time is not None:
+#             scan_info['creation_time'] = creation_time.text
+# 
+#         # Tâche associée
+#         task = root.find('.//task')
+#         if task is not None:
+#             scan_info['task_name'] = task.find('name').text if task.find('name') is not None else ''
+# 
+#         return scan_info
+# 
+#     @staticmethod
+#     def _get_host_ip(result: ET.Element) -> Optional[str]:
+#         """Extrait l'IP de l'hôte depuis un résultat"""
+#         host = result.find('host')
+#         if host is not None:
+#             ip = host.text
+#             if validate_ip_address(ip):
+#                 return ip
+#         return None
+# 
+#     @staticmethod
+#     def _parse_result(result: ET.Element) -> Optional[ParsedVulnerability]:
+#         """Parse un élément result OpenVAS"""
+#         try:
+#             # ID du NVT
+#             nvt = result.find('nvt')
+#             if nvt is None:
+#                 return None
+# 
+#             nvt_id = nvt.get('oid', '')
+# 
+#             # Nom de la vulnérabilité
+#             name_elem = nvt.find('name')
+#             name = name_elem.text if name_elem is not None else 'Unknown Vulnerability'
+# 
+#             # Sévérité et CVSS
+#             threat_elem = result.find('threat')
+#             threat = threat_elem.text if threat_elem is not None else 'Log'
+# 
+#             severity_elem = result.find('severity')
+#             cvss_score = None
+#             if severity_elem is not None:
+#                 try:
+#                     cvss_score = float(severity_elem.text)
+#                 except (ValueError, TypeError):
+#                     pass
+# 
+#             # Description
+#             description_elem = result.find('description')
+#             description = description_elem.text if description_elem is not None else ''
+# 
+#             # Port
+#             port_elem = result.find('port')
+#             port_str = port_elem.text if port_elem is not None else '0'
+# 
+#             # Extraire le numéro de port
+#             port_match = re.search(r'(\d+)/', port_str)
+#             port = int(port_match.group(1)) if port_match else 0
+# 
+#             # Service
+#             service = 'unknown'
+#             if '/' in port_str:
+#                 service = port_str.split('/')[1]
+# 
+#             # CVEs
+#             cves = []
+#             refs_elem = nvt.find('refs')
+#             if refs_elem is not None:
+#                 for ref in refs_elem.findall('ref'):
+#                     if ref.get('type') == 'cve':
+#                         cves.append(ref.get('id', ''))
+# 
+#             # Solution
+#             solution_elem = nvt.find('solution')
+#             solution = solution_elem.text if solution_elem is not None else None
+# 
+#             # Mapping de sévérité OpenVAS -> Standard
+#             severity_map = {
+#                 'High': 'HIGH',
+#                 'Medium': 'MEDIUM',
+#                 'Low': 'LOW',
+#                 'Log': 'INFO',
+#                 'Debug': 'INFO'
+#             }
+# 
+#             severity = severity_map.get(threat, 'LOW')
+#             if cvss_score and cvss_score >= 9.0:
+#                 severity = 'CRITICAL'
+# 
+#             return ParsedVulnerability(
+#                 id=nvt_id,
+#                 name=name,
+#                 severity=severity,
+#                 cvss_score=cvss_score,
+#                 description=description[:500],  # Limiter la taille
+#                 affected_service=service,
+#                 affected_port=port,
+#                 cve_ids=cves,
+#                 references=[],
+#                 solution=solution,
+#                 risk_factor=threat
+#             )
+# 
+#         except Exception as e:
+#             logger.warning(f"Erreur parsing résultat OpenVAS: {e}")
+#             return None
+# 
+# 
+# # === PARSERS TENABLE ===
+# 
+# class TenableParser:
     """Parser pour les exports Tenable/Nessus JSON"""
 
     @staticmethod
