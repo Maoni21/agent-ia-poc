@@ -343,25 +343,19 @@ class Collector:
 
         # Configuration par type de scan
         scan_configs = {
-            "quick": "-sV -T4 --top-ports 1000 --script vuln",
-            "full": "-sV -sC -T4 --script vuln,safe",
-            "stealth": "-sS -sV -T2 --script vuln",
-            "aggressive": "-sV -sC -A -T4 --script vuln,exploit",
+            "quick": "-sV -T4 --top-ports 1000 --script vuln --host-timeout 30m --script-timeout 10m",
+            "full": "-sV -sC -T4 --script vuln,safe --host-timeout 60m --script-timeout 15m",
+            "stealth": "-sS -sV -T2 --script vuln --host-timeout 30m --script-timeout 10m",
+            "aggressive": "-sV -sC -A -T4 --script vuln,exploit --host-timeout 60m --script-timeout 15m",
             "custom": self.nmap_config.get("args", "-sV -sC --script vuln")
         }
 
         base_args = scan_configs.get(scan_type, scan_configs["full"])
 
-        # Ajouter les arguments de timing et timeout
+        # Ne plus ajouter les timeouts ici car ils sont déjà dans scan_configs
         timing = self.nmap_config.get("timing", "T4")
         if timing not in base_args:
             base_args += f" -{timing}"
-
-        # Ajouter les timeouts
-        host_timeout = self.nmap_config.get("host_timeout", "5m")
-        script_timeout = self.nmap_config.get("script_timeout", "2m")
-
-        base_args += f" --host-timeout {host_timeout} --script-timeout {script_timeout}"
 
         return base_args
 

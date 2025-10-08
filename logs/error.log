@@ -2626,3 +2626,45 @@ Traceback (most recent call last):
     detail="Scan terminé mais résultats non disponibles"
            ^^^^^^^^^^^
 AttributeError: 'NoneType' object has no attribute 'get'
+2025-10-01 14:27:14,921 - src.api.main - ERROR - main.py:88 - lifespan() - ❌ Erreur lors de l'arrêt: 'Database' object has no attribute 'close'
+2025-10-01 14:34:42,481 - src.api.routes - ERROR - routes.py:128 - start_scan() - Erreur lors du démarrage du scan: type object 'APIErrorCodes' has no attribute 'SCAN_ALREADY_RUNNING'
+2025-10-01 14:44:43,963 - src.api.main - ERROR - main.py:88 - lifespan() - ❌ Erreur lors de l'arrêt: 'Database' object has no attribute 'close'
+2025-10-01 14:45:16,662 - src.api.routes - ERROR - routes.py:654 - run_scan_task() - Erreur dans le scan 142f8c54-3f32-4e3e-b338-ae5bf775d25f: name 'WorkflowType' is not defined
+2025-10-01 14:45:56,001 - src.api.main - ERROR - main.py:88 - lifespan() - ❌ Erreur lors de l'arrêt: 'Database' object has no attribute 'close'
+2025-10-01 14:51:35,905 - src.api.routes - ERROR - routes.py:654 - run_scan_task() - Erreur dans le scan 50e7ad3c-00e4-44ea-986d-d67ac4630b5f: name 'WorkflowType' is not defined
+2025-10-01 14:53:19,495 - src.api.main - ERROR - main.py:88 - lifespan() - ❌ Erreur lors de l'arrêt: 'Database' object has no attribute 'close'
+2025-10-01 16:31:52,022 - src.core.collector - ERROR - collector.py:417 - _execute_nmap_scan() - Timeout Nmap après 300s
+2025-10-01 16:31:52,028 - src.core.supervisor - ERROR - supervisor.py:522 - _execute_task() - ❌ Erreur tâche scan: Timeout du scan après 300s
+2025-10-01 16:31:52,029 - src.core.supervisor - ERROR - supervisor.py:460 - _execute_workflow() - ❌ Erreur workflow 71565b55-d868-40bb-ae8a-1e74b84b2de2: Timeout du scan après 300s
+2025-10-01 16:31:52,303 - src.api.routes - ERROR - routes.py:656 - run_scan_task() - Erreur dans le scan 7b13f517-3b6e-42d4-b0a0-94f78d7b45c6: Workflow échoué: 71565b55-d868-40bb-ae8a-1e74b84b2de2
+2025-10-02 14:07:40,505 - src.api.main - ERROR - main.py:88 - lifespan() - ❌ Erreur lors de l'arrêt: 'Database' object has no attribute 'close'
+2025-10-02 14:46:39,641 - src.core.analyzer - ERROR - analyzer.py:285 - analyze_vulnerabilities() - Erreur analyse analysis_1759409199: '\n  "analysis_summary"'
+2025-10-02 14:46:39,641 - src.core.supervisor - ERROR - supervisor.py:522 - _execute_task() - ❌ Erreur tâche analyze: type object 'CoreErrorCodes' has no attribute 'ANALYSIS_FAILED'
+2025-10-02 14:46:39,642 - src.core.supervisor - ERROR - supervisor.py:460 - _execute_workflow() - ❌ Erreur workflow 979da2fc-97ff-41b8-bda3-6e42daeb11b9: type object 'CoreErrorCodes' has no attribute 'ANALYSIS_FAILED'
+2025-10-07 16:04:46,196 - src.core.analyzer - ERROR - analyzer.py:285 - analyze_vulnerabilities() - Erreur analyse analysis_1759845886: '\n  "analysis_summary"'
+2025-10-07 16:04:46,197 - src.core.supervisor - ERROR - supervisor.py:522 - _execute_task() - ❌ Erreur tâche analyze: type object 'CoreErrorCodes' has no attribute 'ANALYSIS_FAILED'
+2025-10-07 16:04:46,199 - src.core.supervisor - ERROR - supervisor.py:460 - _execute_workflow() - ❌ Erreur workflow 0a4f796a-4c8e-41ff-a4b4-2c847e6ee115: type object 'CoreErrorCodes' has no attribute 'ANALYSIS_FAILED'
+2025-10-07 16:26:07,197 - src.core.supervisor - ERROR - supervisor.py:522 - _execute_task() - ❌ Erreur tâche analyze: Aucune donnée de vulnérabilité disponible pour l'analyse
+2025-10-07 16:26:07,197 - src.core.supervisor - ERROR - supervisor.py:460 - _execute_workflow() - ❌ Erreur workflow 4eb435e6-5d57-477e-b8d5-160a691bf795: Aucune donnée de vulnérabilité disponible pour l'analyse
+2025-10-07 20:19:56,359 - src.core.analyzer - ERROR - analyzer.py:284 - analyze_vulnerabilities() - Erreur analyse analysis_1759861196: '\n  "analysis_summary"'
+2025-10-07 20:19:56,359 - src.core.supervisor - ERROR - supervisor.py:522 - _execute_task() - ❌ Erreur tâche analyze: Erreur lors de l'analyse: '\n  "analysis_summary"'
+2025-10-07 20:19:56,361 - src.core.supervisor - ERROR - supervisor.py:460 - _execute_workflow() - ❌ Erreur workflow 4049fc22-dd69-41e4-aebf-53cf0b2e4eee: Erreur lors de l'analyse: '\n  "analysis_summary"'
+2025-10-07 22:00:16,135 - src.core.analyzer - ERROR - analyzer.py:284 - analyze_vulnerabilities() - Erreur analyse analysis_1759867216: '\n  "analysis_summary"'
+2025-10-07 22:00:16,135 - src.core.supervisor - ERROR - supervisor.py:522 - _execute_task() - ❌ Erreur tâche analyze: Erreur lors de l'analyse: '\n  "analysis_summary"'
+2025-10-07 22:00:16,136 - src.core.supervisor - ERROR - supervisor.py:460 - _execute_workflow() - ❌ Erreur workflow 3cb81fed-510d-43e8-b783-40fe110fd088: Erreur lors de l'analyse: '\n  "analysis_summary"'
+2025-10-07 22:03:35,002 - src.core.analyzer - ERROR - analyzer.py:284 - analyze_vulnerabilities() - Erreur analyse analysis_1759867415: '\n  "analysis_summary"'
+2025-10-07 22:03:35,002 - src.core.supervisor - ERROR - supervisor.py:522 - _execute_task() - ❌ Erreur tâche analyze: Erreur lors de l'analyse: '\n  "analysis_summary"'
+2025-10-07 22:03:35,002 - src.core.supervisor - ERROR - supervisor.py:460 - _execute_workflow() - ❌ Erreur workflow 50b96739-24b4-42f8-91d6-726e2225bdcd: Erreur lors de l'analyse: '\n  "analysis_summary"'
+2025-10-07 22:05:10,555 - src.core.analyzer - ERROR - analyzer.py:284 - analyze_vulnerabilities() - Erreur analyse analysis_1759867510: '\n  "analysis_summary"'
+2025-10-07 22:05:10,555 - src.core.supervisor - ERROR - supervisor.py:522 - _execute_task() - ❌ Erreur tâche analyze: Erreur lors de l'analyse: '\n  "analysis_summary"'
+2025-10-07 22:05:10,555 - src.core.supervisor - ERROR - supervisor.py:460 - _execute_workflow() - ❌ Erreur workflow 24d2356f-c89e-42ab-8ecd-73eeb62a4693: Erreur lors de l'analyse: '\n  "analysis_summary"'
+2025-10-08 11:35:09,367 - src.core.analyzer - ERROR - analyzer.py:288 - analyze_vulnerabilities() - Erreur analyse analysis_1759916109: '\n  "analysis_summary"'
+2025-10-08 11:35:09,368 - src.core.supervisor - ERROR - supervisor.py:522 - _execute_task() - ❌ Erreur tâche analyze: Erreur lors de l'analyse: '\n  "analysis_summary"'
+2025-10-08 11:35:09,368 - src.core.supervisor - ERROR - supervisor.py:460 - _execute_workflow() - ❌ Erreur workflow 478ae924-7087-4a59-bc60-96988913ac15: Erreur lors de l'analyse: '\n  "analysis_summary"'
+2025-10-08 11:41:34,613 - src.core.analyzer - ERROR - analyzer.py:288 - analyze_vulnerabilities() - Erreur analyse analysis_1759916494: '\n  "analysis_summary"'
+2025-10-08 11:41:34,613 - src.core.supervisor - ERROR - supervisor.py:522 - _execute_task() - ❌ Erreur tâche analyze: Erreur lors de l'analyse: '\n  "analysis_summary"'
+2025-10-08 11:41:34,613 - src.core.supervisor - ERROR - supervisor.py:460 - _execute_workflow() - ❌ Erreur workflow d7a16761-4e06-433f-b3f3-2100490dd6db: Erreur lors de l'analyse: '\n  "analysis_summary"'
+2025-10-08 14:24:46,673 - src.core.analyzer - ERROR - analyzer.py:288 - analyze_vulnerabilities() - Erreur analyse analysis_1759926286: '\n  "analysis_summary"'
+2025-10-08 14:40:15,843 - src.core.analyzer - ERROR - analyzer.py:288 - analyze_vulnerabilities() - Erreur analyse analysis_1759927124: Timeout de l'API OpenAI
+2025-10-08 14:40:15,846 - src.core.supervisor - ERROR - supervisor.py:522 - _execute_task() - ❌ Erreur tâche analyze: Timeout de l'API OpenAI
+2025-10-08 14:40:15,846 - src.core.supervisor - ERROR - supervisor.py:460 - _execute_workflow() - ❌ Erreur workflow 1ac59d18-3b33-44b1-bc43-880138903268: Timeout de l'API OpenAI

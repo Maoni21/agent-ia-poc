@@ -31,7 +31,7 @@ class Config:
 
     # === CONFIGURATION API ===
     openai_api_key: str
-    openai_model: str = "gpt-4"
+    openai_model: str = "gpt-3.5-turbo"  # Changé de gpt-4 à gpt-3.5-turbo (plus rapide)
     openai_max_tokens: int = 2000
     openai_temperature: float = 0.3
 
@@ -80,9 +80,9 @@ class Config:
 NMAP_DEFAULT_ARGS = os.getenv("NMAP_DEFAULT_ARGS", "-sV -sC --script vuln")
 SCAN_TIMEOUT = int(os.getenv("SCAN_TIMEOUT", "300"))
 
-# Configuration OpenAI
+# Configuration OpenAI - OPTIMISÉE pour éviter les timeouts
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4")
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-3.5-turbo")  # Changé de gpt-4
 MAX_TOKENS = int(os.getenv("MAX_TOKENS", "2000"))
 TEMPERATURE = float(os.getenv("TEMPERATURE", "0.3"))
 
@@ -121,19 +121,39 @@ CVE_CONFIG = {
     "severity_threshold": 5.0  # CVSS score minimum
 }
 
-# Configuration IA/LLM
+# Configuration IA/LLM - OPTIMISÉE
 LLM_CONFIG = {
     "openai": {
+        "provider": "openai",
         "api_key": OPENAI_API_KEY,
         "model": OPENAI_MODEL,
         "max_tokens": MAX_TOKENS,
         "temperature": TEMPERATURE,
-        "timeout": 30
+        "timeout": 120  # Augmenté de 30 à 120 secondes
+    },
+    "openai_fast": {  # Configuration alternative pour tests rapides
+        "provider": "openai",
+        "api_key": OPENAI_API_KEY,
+        "model": "gpt-3.5-turbo",  # Plus rapide
+        "max_tokens": 1500,
+        "temperature": 0.3,
+        "timeout": 60
+    },
+    "openai_premium": {  # Configuration pour analyses approfondies
+        "provider": "openai",
+        "api_key": OPENAI_API_KEY,
+        "model": "gpt-4",  # Plus précis mais plus lent
+        "max_tokens": 2500,
+        "temperature": 0.3,
+        "timeout": 180  # 3 minutes
     },
     "ollama": {  # Configuration pour modèles locaux
+        "provider": "ollama",
         "base_url": os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
         "model": os.getenv("OLLAMA_MODEL", "llama3"),
-        "timeout": 60
+        "max_tokens": 2000,
+        "temperature": 0.3,
+        "timeout": 90
     }
 }
 
@@ -230,15 +250,28 @@ def get_llm_config(provider: str = "openai") -> Dict[str, Any]:
     Retourne la configuration pour un fournisseur LLM
 
     Args:
-        provider: Fournisseur LLM (openai, ollama)
+        provider: Fournisseur LLM (openai, openai_fast, openai_premium, ollama)
 
     Returns:
         Dict contenant la configuration du LLM
+
+    Note:
+        - "openai" : Configuration par défaut (gpt-3.5-turbo, 120s timeout)
+        - "openai_fast" : Pour tests rapides (gpt-3.5-turbo, 60s timeout)
+        - "openai_premium" : Pour analyses approfondies (gpt-4, 180s timeout)
+        - "ollama" : Pour modèles locaux
     """
     if provider not in LLM_CONFIG:
+        print(f"⚠️  Provider '{provider}' inconnu, utilisation de 'openai' par défaut")
         provider = "openai"
 
-    return LLM_CONFIG[provider]
+    config = LLM_CONFIG[provider].copy()
+
+    # Ajouter le provider si pas présent
+    if "provider" not in config:
+        config["provider"] = provider.split("_")[0]  # openai_fast -> openai
+
+    return config
 
 
 # === VALIDATION AU CHARGEMENT ===
@@ -258,6 +291,12 @@ def _validate_environment():
     if not OPENAI_API_KEY:
         print("⚠️  AVERTISSEMENT: OPENAI_API_KEY n'est pas définie dans les variables d'environnement")
         print("   Veuillez configurer votre fichier .env avant d'utiliser l'agent IA")
+    else:
+        # Afficher la configuration actuelle
+        print(f"✅ Configuration OpenAI chargée:")
+        print(f"   - Modèle: {OPENAI_MODEL}")
+        print(f"   - Timeout: {LLM_CONFIG['openai']['timeout']}s")
+        print(f"   - Max tokens: {MAX_TOKENS}")
 
 
 # Exécuter la validation au chargement

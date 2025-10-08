@@ -542,7 +542,7 @@ class Supervisor:
             self._call_progress_callbacks(workflow_def.workflow_id, "scan", progress)
 
         scan_type = workflow_def.parameters.get('scan_type', 'full')
-        timeout = workflow_def.parameters.get('timeout', 300)
+        timeout = workflow_def.parameters.get('timeout', 3600)  # ← Changez 300 en 3600
         custom_args = workflow_def.parameters.get('nmap_args')
 
         result = await self.collector.scan_target(

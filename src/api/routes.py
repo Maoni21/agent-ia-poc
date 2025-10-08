@@ -14,7 +14,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 import json
 
 from src.database.database import Database
-from src.core.supervisor import Supervisor
+from src.core.supervisor import Supervisor, WorkflowType  # ← Ajouter WorkflowType
 from src.utils.logger import setup_logger
 from .dependencies import get_database, get_supervisor, get_current_user
 from .schemas import (
@@ -32,6 +32,8 @@ from .schemas import (
     ScriptModel,
 )
 from . import APIErrorCodes, ERROR_MESSAGES
+from pathlib import Path
+
 
 # Configuration du logging
 logger = setup_logger(__name__)
@@ -135,43 +137,98 @@ async def start_scan(
         )
 
 
-@router.get("/scan/{scan_id}/status", response_model=Dict[str, Any], tags=["scans"])
-async def get_scan_status(
-        scan_id: str,
-        current_user: Dict[str, Any] = Depends(get_current_user)
-):
+@router.get("/scan/{scan_id}/results")
+async def get_scan_results(scan_id: str):
     """
-    Récupérer le statut d'un scan
+    Récupère les résultats d'un scan
 
     Args:
         scan_id: ID du scan
-        current_user: Utilisateur authentifié
 
     Returns:
-        Dict: Statut du scan avec progression
+        Résultats du scan
     """
-    if scan_id not in active_tasks:
+    try:
+        # 1. Vérifier dans active_tasks
+        if scan_id in active_tasks:
+            task_data = active_tasks[scan_id]
+
+            if task_data["status"] == "running":
+                return {
+                    "success": True,
+                    "scan_id": scan_id,
+                    "status": "running",
+                    "progress": task_data.get("progress", 0),
+                    "message": "Scan en cours..."
+                }
+
+            elif task_data["status"] == "completed":
+                # Récupérer les résultats depuis les fichiers workflow
+                workflow_id = task_data.get("workflow_id")
+                if workflow_id:
+                    results_dir = Path("data/workflow_results")
+                    result_file = results_dir / f"{workflow_id}.json"
+
+                    if result_file.exists():
+                        with open(result_file, 'r', encoding='utf-8') as f:
+                            workflow_data = json.load(f)
+
+                        return {
+                            "success": True,
+                            "scan_id": scan_id,
+                            "status": "completed",
+                            "results": workflow_data
+                        }
+
+                # Fallback: retourner les résultats depuis active_tasks
+                return {
+                    "success": True,
+                    "scan_id": scan_id,
+                    "status": "completed",
+                    "results": task_data.get("results", {})
+                }
+
+            elif task_data["status"] == "failed":
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Scan échoué: {task_data.get('error', 'Erreur inconnue')}"
+                )
+
+        # 2. Vérifier dans les fichiers workflow
+        results_dir = Path("data/workflow_results")
+        if results_dir.exists():
+            # Chercher un fichier contenant le scan_id
+            for result_file in results_dir.glob("*.json"):
+                try:
+                    with open(result_file, 'r', encoding='utf-8') as f:
+                        workflow_data = json.load(f)
+
+                    # Vérifier si c'est le bon scan
+                    if workflow_data.get("scan_result", {}).get("scan_id") == scan_id:
+                        return {
+                            "success": True,
+                            "scan_id": scan_id,
+                            "status": "completed",
+                            "results": workflow_data
+                        }
+                except Exception as e:
+                    logger.warning(f"Erreur lecture {result_file}: {e}")
+                    continue
+
+        # 3. Scan non trouvé
         raise HTTPException(
             status_code=404,
-            detail={
-                "code": APIErrorCodes.SCAN_NOT_FOUND,
-                "message": ERROR_MESSAGES[APIErrorCodes.SCAN_NOT_FOUND]
-            }
+            detail="Scan non trouvé ou résultats non disponibles"
         )
 
-    task = active_tasks[scan_id]
-
-    return {
-        "scan_id": scan_id,
-        "target": task.get("target"),
-        "status": task.get("status"),
-        "progress": task.get("progress", 0),
-        "started_at": task.get("started_at"),
-        "completed_at": task.get("completed_at"),
-        "error": task.get("error"),
-        "estimated_remaining": task.get("estimated_remaining"),
-    }
-
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Erreur récupération résultats: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Erreur interne: {str(e)}"
+        )
 
 @router.get("/scan/{scan_id}/results", response_model=Dict[str, Any], tags=["scans"])
 async def get_scan_results(
@@ -564,34 +621,33 @@ async def run_scan_task(
         scan_request: ScanRequest,
         supervisor: Supervisor
 ):
-    """
-    Exécuter un scan en arrière-plan
-
-    Args:
-        scan_id: ID du scan
-        scan_request: Paramètres du scan
-        supervisor: Instance du superviseur
-    """
+    """Exécuter un scan en arrière-plan"""
     try:
-        # Mettre à jour le statut
         active_tasks[scan_id]["status"] = "running"
         active_tasks[scan_id]["progress"] = 10
 
         logger.info(f"Démarrage du scan {scan_id}")
 
-        # Lancer le scan via le superviseur
-        scan_results = await supervisor.run_scan(
+        # Lancer le workflow via le superviseur
+        workflow_id = await supervisor.start_workflow(
+            WorkflowType.SCAN_ONLY,
             target=scan_request.target,
-            scan_type=scan_request.scan_type,
-            progress_callback=lambda p: update_scan_progress(scan_id, p)
+            parameters={"scan_type": scan_request.scan_type}
         )
+
+        # ✅ IMPORTANT: Stocker le workflow_id
+        active_tasks[scan_id]["workflow_id"] = workflow_id
+
+        # Attendre la fin avec timeout de 1h (3600 secondes)
+        scan_results = await supervisor.wait_for_workflow(workflow_id, timeout=3600)
 
         # Marquer comme terminé
         active_tasks[scan_id].update({
             "status": "completed",
             "progress": 100,
             "completed_at": datetime.utcnow().isoformat(),
-            "results": scan_results
+            "workflow_id": workflow_id,  # Garder le workflow_id
+            "results": scan_results.to_dict() if hasattr(scan_results, 'to_dict') else scan_results
         })
 
         logger.info(f"Scan terminé: {scan_id}")
@@ -603,7 +659,6 @@ async def run_scan_task(
             "completed_at": datetime.utcnow().isoformat(),
             "error": str(e)
         })
-
 
 def update_scan_progress(scan_id: str, progress: int):
     """Mettre à jour la progression d'un scan"""

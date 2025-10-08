@@ -34,17 +34,17 @@ Analyse ces vulnérabilités et fournis une réponse structurée en JSON avec :
 
 **FORMAT DE RÉPONSE ATTENDU :**
 ```json
-{
-  "analysis_summary": {
+{{
+  "analysis_summary": {{
     "total_vulnerabilities": 0,
     "critical_count": 0,
     "high_count": 0,
     "medium_count": 0,
     "low_count": 0,
     "overall_risk_score": 0
-  },
+  }},
   "vulnerabilities": [
-    {
+    {{
       "id": "CVE-XXXX-XXXX ou ID local",
       "name": "Nom de la vulnérabilité",
       "severity": "CRITICAL|HIGH|MEDIUM|LOW",
@@ -59,14 +59,14 @@ Analyse ces vulnérabilités et fournis une réponse structurée en JSON avec :
       ],
       "dependencies": ["CVE-XXXX-XXXX"],
       "references": ["URL1", "URL2"]
-    }
+    }}
   ],
-  "remediation_plan": {
+  "remediation_plan": {{
     "immediate_actions": ["Actions urgentes"],
     "short_term": ["Actions à court terme"],
     "long_term": ["Actions à long terme"]
-  }
-}
+  }}
+}}
 ```
 
 **CRITÈRES D'ÉVALUATION :**
@@ -104,14 +104,14 @@ Génère un script bash sécurisé pour corriger cette vulnérabilité.
 
 **FORMAT DE RÉPONSE :**
 ```json
-{
-  "script_info": {
+{{
+  "script_info": {{
     "vulnerability_id": "CVE ou ID",
     "description": "Description de ce que fait le script",
     "estimated_duration": "Temps estimé d'exécution",
     "requires_reboot": false,
     "risk_level": "LOW|MEDIUM|HIGH"
-  },
+  }},
   "pre_checks": [
     "Vérification 1",
     "Vérification 2"
@@ -120,8 +120,8 @@ Génère un script bash sécurisé pour corriger cette vulnérabilité.
     "cp /etc/config /etc/config.backup.$(date +%Y%m%d_%H%M%S)",
     "Autres sauvegardes nécessaires"
   ],
-  "main_script": "#!/bin/bash\n\n# Script de correction généré automatiquement\n# Vulnérabilité: {vulnerability_name}\n# Date: $(date)\n\nset -euo pipefail\n\n# Vos commandes ici",
-  "rollback_script": "#!/bin/bash\n\n# Script de rollback\n# Restaure l'état précédent\n\nset -euo pipefail\n\n# Commandes de restauration",
+  "main_script": "#!/bin/bash\\n\\n# Script de correction généré automatiquement\\n# Vulnérabilité: {vulnerability_name}\\n# Date: $(date)\\n\\nset -euo pipefail\\n\\n# Vos commandes ici",
+  "rollback_script": "#!/bin/bash\\n\\n# Script de rollback\\n# Restaure l'état précédent\\n\\nset -euo pipefail\\n\\n# Commandes de restauration",
   "post_checks": [
     "Vérification que le correctif fonctionne",
     "Tests de régression"
@@ -130,7 +130,7 @@ Génère un script bash sécurisé pour corriger cette vulnérabilité.
     "Avertissements importants",
     "Points d'attention"
   ]
-}
+}}
 ```
 
 **BONNES PRATIQUES À RESPECTER :**
@@ -167,15 +167,15 @@ Voici une liste de vulnérabilités détectées sur un système en production :
 
 **FORMAT DE RÉPONSE :**
 ```json
-{
-  "executive_summary": {
+{{
+  "executive_summary": {{
     "total_vulnerabilities": 0,
     "immediate_action_required": 0,
     "estimated_total_effort": "X heures/jours",
     "business_risk_level": "LOW|MEDIUM|HIGH|CRITICAL"
-  },
+  }},
   "priority_matrix": [
-    {
+    {{
       "rank": 1,
       "vulnerability_id": "CVE-XXXX-XXXX",
       "justification": "Pourquoi cette priorité",
@@ -183,34 +183,34 @@ Voici une liste de vulnérabilités détectées sur un système en production :
       "technical_complexity": "SIMPLE|MEDIUM|COMPLEX",
       "estimated_effort": "X heures",
       "recommended_timing": "IMMEDIATE|THIS_WEEK|THIS_MONTH|NEXT_QUARTER"
-    }
+    }}
   ],
-  "implementation_roadmap": {
-    "phase_1_immediate": {
+  "implementation_roadmap": {{
+    "phase_1_immediate": {{
       "vulnerabilities": ["CVE-1", "CVE-2"],
       "duration": "24-48h",
       "resources_needed": ["Administrateur système", "Temps d'arrêt"]
-    },
-    "phase_2_short_term": {
+    }},
+    "phase_2_short_term": {{
       "vulnerabilities": ["CVE-3", "CVE-4"],
       "duration": "1-2 semaines",
       "resources_needed": ["Équipe dev", "Tests"]
-    },
-    "phase_3_long_term": {
+    }},
+    "phase_3_long_term": {{
       "vulnerabilities": ["CVE-5"],
       "duration": "1+ mois",
       "resources_needed": ["Refonte architecture"]
-    }
-  },
-  "risk_acceptance": {
+    }}
+  }},
+  "risk_acceptance": {{
     "acceptable_risks": ["Vulnérabilités à risque acceptable"],
     "justification": "Pourquoi ces risques sont acceptables"
-  },
+  }},
   "recommendations": [
     "Recommandation stratégique 1",
     "Recommandation opérationnelle 2"
   ]
-}
+}}
 ```
 
 Sois pragmatique et oriente business dans tes recommandations.
@@ -238,34 +238,34 @@ Analyse ce script bash et évalue sa sécurité avant exécution :
 
 **FORMAT DE RÉPONSE :**
 ```json
-{
-  "security_assessment": {
+{{
+  "security_assessment": {{
     "overall_risk": "LOW|MEDIUM|HIGH|CRITICAL",
     "execution_recommendation": "APPROVE|REVIEW_REQUIRED|REJECT",
     "confidence_level": "0-100%"
-  },
+  }},
   "identified_risks": [
-    {
+    {{
       "type": "COMMAND_INJECTION|FILE_MANIPULATION|PRIVILEGE_ESCALATION|DATA_LOSS",
       "severity": "LOW|MEDIUM|HIGH|CRITICAL",
       "description": "Description du risque",
       "line_number": 42,
       "recommendation": "Comment mitiger ce risque"
-    }
+    }}
   ],
-  "security_checks": {
+  "security_checks": {{
     "dangerous_commands": ["rm -rf", "chmod 777"],
     "privilege_escalation": false,
     "external_downloads": false,
     "file_modifications": ["/etc/passwd", "/etc/shadow"],
     "network_connections": false
-  },
+  }},
   "improvements": [
     "Suggestion d'amélioration 1",
     "Suggestion d'amélioration 2"
   ],
   "alternative_approach": "Approche alternative plus sûre si applicable"
-}
+}}
 ```
 
 **CRITÈRES DE VALIDATION :**
@@ -293,51 +293,82 @@ Tu es un consultant en cybersécurité préparant un rapport pour la direction.
 **OBJECTIF :**
 Rédige un rapport exécutif clair et actionnable pour des dirigeants non-techniques.
 
-**STRUCTURE ATTENDUE :**
+**STRUCTURE DU RAPPORT :**
+
+1. **Résumé Exécutif** (3-5 phrases)
+   - Situation globale de sécurité
+   - Risques majeurs identifiés
+   - Recommandations prioritaires
+
+2. **Niveau de Risque Global**
+   - Score de risque sur 10
+   - Comparaison avec les standards du secteur
+   - Évolution depuis le dernier audit
+
+3. **Top 3 des Vulnérabilités Critiques**
+   - Description en langage simple
+   - Impact business concret
+   - Coût potentiel d'une exploitation
+
+4. **Plan d'Action Recommandé**
+   - Actions immédiates (0-30 jours)
+   - Moyen terme (1-6 mois)
+   - Long terme (6-12 mois)
+
+5. **Investissements Requis**
+   - Budget estimé par phase
+   - Ressources humaines nécessaires
+   - Retour sur investissement attendu
+
+**STYLE :**
+- Langage non-technique et accessible
+- Focus sur l'impact business
+- Chiffres et métriques concrets
+- Recommandations actionnables
+
+**FORMAT DE RÉPONSE :**
 ```json
-{
-  "executive_summary": {
-    "key_findings": [
-      "Point clé 1 en langage business",
-      "Point clé 2 avec impact chiffré"
-    ],
-    "overall_security_posture": "POOR|FAIR|GOOD|EXCELLENT",
-    "immediate_actions_required": 0,
-    "estimated_budget_impact": "€X,XXX",
-    "timeline_for_remediation": "X semaines/mois"
-  },
-  "business_impact": {
-    "potential_financial_loss": "€X,XXX en cas d'incident",
-    "regulatory_compliance": "COMPLIANT|AT_RISK|NON_COMPLIANT",
-    "reputation_risk": "LOW|MEDIUM|HIGH",
-    "operational_continuity": "SECURE|AT_RISK|VULNERABLE"
-  },
-  "prioritized_recommendations": [
-    {
-      "priority": "CRITICAL|HIGH|MEDIUM|LOW",
-      "action": "Action concrète",
-      "business_justification": "Pourquoi c'est important pour l'entreprise",
-      "cost_estimate": "€X,XXX",
-      "timeline": "X semaines",
-      "roi_expected": "Retour sur investissement attendu"
-    }
+{{
+  "executive_summary": {{
+    "overall_security_grade": "A|B|C|D|F",
+    "risk_level": "LOW|MEDIUM|HIGH|CRITICAL",
+    "critical_issues": 0,
+    "immediate_actions_needed": 0,
+    "estimated_remediation_cost": "Budget estimé"
+  }},
+  "key_findings": [
+    {{
+      "title": "Titre du problème",
+      "severity": "CRITICAL|HIGH|MEDIUM|LOW",
+      "business_impact": "Impact en langage business",
+      "probability": "Probabilité d'exploitation",
+      "estimated_loss": "Perte financière potentielle"
+    }}
   ],
-  "resource_requirements": {
-    "internal_resources": ["Compétences nécessaires"],
-    "external_expertise": ["Consultants spécialisés"],
-    "technology_investments": ["Outils à acquérir"],
-    "training_needs": ["Formations requises"]
-  },
-  "next_steps": [
-    "Étape immédiate 1",
-    "Étape suivante 2"
+  "action_plan": {{
+    "immediate": [
+      {{
+        "action": "Action à prendre",
+        "timeline": "Délai",
+        "cost": "Coût estimé",
+        "priority": "HIGH|MEDIUM|LOW"
+      }}
+    ],
+    "short_term": [],
+    "long_term": []
+  }},
+  "investment_summary": {{
+    "total_estimated_cost": "Coût total",
+    "expected_roi": "ROI attendu",
+    "risk_reduction": "Réduction du risque en %"
+  }},
+  "recommendations": [
+    "Recommandation stratégique 1",
+    "Recommandation stratégique 2"
   ]
-}
+}}
 ```
-
-Utilise un langage accessible et oriente tes recommandations vers l'impact business.
 """
-
 
 # === FONCTIONS UTILITAIRES POUR LES PROMPTS ===
 
