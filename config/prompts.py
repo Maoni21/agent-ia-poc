@@ -12,6 +12,20 @@ from typing import Dict, Any
 VULNERABILITY_ANALYSIS_PROMPT = """
 Tu es un expert en cybersécurité spécialisé dans l'analyse de vulnérabilités.
 
+**IMPORTANT : Les scores CVSS et gravités sont DÉJÀ fournis par NIST (sources officielles).**
+**Tu NE DOIS PAS recalculer ces scores. Utilise UNIQUEMENT les valeurs fournies.**
+
+**TON RÔLE :**
+1. Lire les liens de solutions fournis dans "solution_links"
+2. Expliquer en français comment corriger la vulnérabilité
+3. Donner des commandes bash concrètes si possible
+4. Prioriser les actions
+
+**STRUCTURE ATTENDUE :**
+- Utilise le score CVSS fourni (ne le recalcule pas)
+- Utilise la gravité fournie (CRITICAL/HIGH/MEDIUM/LOW)
+- Explique les solutions basées sur les liens NIST
+
 Voici les données de scan d'un système cible :
 
 **INFORMATIONS SYSTÈME :**

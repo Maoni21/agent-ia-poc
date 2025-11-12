@@ -1,50 +1,68 @@
 """
-Module d'analyse IA pour l'Agent de Cybersécurité
+Module d'analyse IA de vulnérabilités - Version NIST avec OpenAI
 
-Ce module utilise des modèles d'IA (OpenAI GPT, Ollama, etc.) pour analyser
-les vulnérabilités détectées et fournir des recommandations de remédiation
-intelligentes et priorisées.
+Ce module analyse les vulnérabilités détectées par Nmap NSE en utilisant
+OpenAI pour fournir des analyses approfondies et des recommandations de remédiation.
 
-Fonctionnalités :
-- Analyse contextuelle des vulnérabilités
-- Évaluation des risques et impacts business
-- Priorisation automatique basée sur CVSS et contexte
-- Génération de plans de remédiation
-- Support multi-modèles IA (OpenAI, Ollama, Anthropic)
+Workflow NIST:
+1. NSE détecte les CVE
+2. NIST enrichit avec scores officiels + liens solutions
+3. OpenAI explique les solutions en français
+
+Fonctionnalités:
+- Analyse contextuelle des vulnérabilités avec OpenAI
+- Calcul de scores de priorité et de confiance
+- Génération de plans de remédiation détaillés
+- Cache NIST pour optimisation
+- Gestion d'erreurs robuste
 """
 
 import asyncio
 import json
-import logging
+import os
 import time
-from datetime import datetime
-from typing import Dict, List, Any, Optional, Union
-from dataclasses import dataclass, asdict
-from pathlib import Path
-
-import openai
+import logging
 import requests
-from openai import AsyncOpenAI
+from pathlib import Path
+from datetime import datetime, timedelta
+from typing import Any, Dict, List, Optional, Tuple
+from dataclasses import dataclass, field, asdict
 
-from config import get_config, get_llm_config
-from config.prompts import (
-    format_vulnerability_prompt,
-    format_priority_assessment_prompt,
-    format_executive_report_prompt
-)
+from openai import AsyncOpenAI, OpenAIError
+
+from config import get_config
 from src.utils.logger import setup_logger
-from src.database.database import Database
-from . import AnalyzerException, CoreErrorCodes, ERROR_MESSAGES
+from src.core import CoreException, CoreErrorCodes
+from src.core.nist_enricher import NISTEnricher
 
 # Configuration du logging
 logger = setup_logger(__name__)
 
 
-# === MODÈLES DE DONNÉES ===
+# ============================================================================
+# EXCEPTIONS PERSONNALISÉES
+# ============================================================================
+
+class AnalyzerException(CoreException):
+    """Exception levée par le module Analyzer"""
+
+    def __init__(
+            self,
+            message: str,
+            error_code: int = CoreErrorCodes.AI_SERVICE_ERROR,
+            details: Optional[Dict] = None
+    ):
+        super().__init__(message, error_code, details)
+
+
+# ============================================================================
+# DATACLASSES POUR LES RÉSULTATS
+# ============================================================================
 
 @dataclass
 class VulnerabilityAnalysis:
-    """Analyse d'une vulnérabilité individuelle"""
+    """Analyse détaillée d'une vulnérabilité individuelle"""
+
     vulnerability_id: str
     name: str
     severity: str
@@ -54,116 +72,235 @@ class VulnerabilityAnalysis:
     priority_score: int
     affected_service: str
     recommended_actions: List[str]
-    dependencies: List[str]
-    references: List[str]
+    dependencies: List[str] = field(default_factory=list)
+    references: List[str] = field(default_factory=list)
+
+    # Données NIST (nouvelles)
+    cvss_vector: Optional[str] = None
+    nist_verified: bool = False
+    nist_url: Optional[str] = None
+    solution_links: List[Dict] = field(default_factory=list)
+
+    # Explications IA (nouvelles)
+    ai_explanation: Optional[Dict] = None
+    correction_script: Optional[str] = None
+    rollback_script: Optional[str] = None
     business_impact: Optional[str] = None
-    remediation_effort: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
-        """Convertit en dictionnaire"""
+        """Convertit l'analyse en dictionnaire"""
         return asdict(self)
 
 
 @dataclass
 class AnalysisResult:
-    """Résultat complet d'une analyse IA"""
+    """Résultat complet de l'analyse"""
+
     analysis_id: str
     target_system: str
     analyzed_at: datetime
-
-    # Résumé de l'analyse
     analysis_summary: Dict[str, Any]
-
-    # Vulnérabilités analysées
     vulnerabilities: List[VulnerabilityAnalysis]
-
-    # Plan de remédiation
     remediation_plan: Dict[str, Any]
-
-    # Métadonnées
     ai_model_used: str
     confidence_score: float
     processing_time: float
+    business_context: Optional[Dict[str, Any]] = None
+
+    # Métadonnées NIST (nouvelles)
+    nist_enriched: bool = False
+    nist_call_count: int = 0
+    nist_cache_hits: int = 0
 
     def to_dict(self) -> Dict[str, Any]:
-        """Convertit en dictionnaire"""
-        result = asdict(self)
-        result['vulnerabilities'] = [vuln.to_dict() for vuln in self.vulnerabilities]
-        result['analyzed_at'] = self.analyzed_at.isoformat()
-        return result
+        """Convertit le résultat en dictionnaire"""
+        return {
+            "analysis_id": self.analysis_id,
+            "target_system": self.target_system,
+            "analyzed_at": self.analyzed_at.isoformat(),
+            "analysis_summary": self.analysis_summary,
+            "vulnerabilities": [v.to_dict() for v in self.vulnerabilities],
+            "remediation_plan": self.remediation_plan,
+            "ai_model_used": self.ai_model_used,
+            "confidence_score": self.confidence_score,
+            "processing_time": self.processing_time,
+            "business_context": self.business_context,
+            "nist_enriched": self.nist_enriched,
+            "nist_call_count": self.nist_call_count,
+            "nist_cache_hits": self.nist_cache_hits
+        }
 
 
-# === CLASSE PRINCIPALE ===
+# ============================================================================
+# CACHE NIST
+# ============================================================================
+
+class NISTCache:
+    """Cache local pour les données NIST"""
+
+    def __init__(self, cache_dir: str = "data/cache/nist"):
+        self.cache_dir = Path(cache_dir)
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self.cache_duration = timedelta(hours=24)
+        logger.debug(f"Cache NIST initialisé: {self.cache_dir}")
+
+    def get(self, cve_id: str) -> Optional[Dict]:
+        """Récupère depuis le cache si valide"""
+        cache_file = self.cache_dir / f"{cve_id}.json"
+
+        if cache_file.exists():
+            file_age = datetime.now() - datetime.fromtimestamp(
+                cache_file.stat().st_mtime
+            )
+
+            if file_age < self.cache_duration:
+                try:
+                    with open(cache_file, 'r') as f:
+                        return json.load(f)
+                except Exception as e:
+                    logger.warning(f"Erreur lecture cache {cve_id}: {e}")
+
+        return None
+
+    def set(self, cve_id: str, data: dict):
+        """Sauvegarde dans le cache"""
+        cache_file = self.cache_dir / f"{cve_id}.json"
+
+        try:
+            with open(cache_file, 'w') as f:
+                json.dump(data, f, indent=2)
+        except Exception as e:
+            logger.warning(f"Erreur écriture cache {cve_id}: {e}")
+
+    def clear_old(self, max_age_days: int = 7):
+        """Nettoie les caches anciens"""
+        cutoff = datetime.now() - timedelta(days=max_age_days)
+        cleaned = 0
+
+        for cache_file in self.cache_dir.glob("*.json"):
+            file_time = datetime.fromtimestamp(cache_file.stat().st_mtime)
+            if file_time < cutoff:
+                cache_file.unlink()
+                cleaned += 1
+
+        if cleaned > 0:
+            logger.info(f"Cache NIST nettoyé: {cleaned} fichiers supprimés")
+
+
+# ============================================================================
+# CLASSE PRINCIPALE ANALYZER
+# ============================================================================
+    def _filter_nist_references(self, references: List[dict]) -> Optional[str]:
+        """
+        Filtrer les références NIST pour garder UN SEUL lien solution
+        
+        Priorité : Patch > Vendor Advisory > Mitigation > Premier lien
+        """
+        if not references:
+            return None
+        
+        # Tags prioritaires (dans l'ordre)
+        priority_tags = ['Patch', 'Vendor Advisory', 'Mitigation', 'Third Party Advisory']
+        
+        # Chercher le premier lien avec un tag prioritaire
+        for tag in priority_tags:
+            for ref in references:
+                ref_tags = ref.get('tags', [])
+                if tag in ref_tags:
+                    return ref.get('url', '')
+        
+        # Si aucun tag prioritaire, prendre le premier lien
+        return references[0].get('url', '') if references else None
+    
+    def _enrich_vulnerability_with_nist(self, vulnerability: dict) -> dict:
+        """
+        Enrichir une vulnérabilité avec les données NIST (FILTRÉES)
+        """
+        cve_id = vulnerability.get('vulnerability_id', '')
+        
+        if not cve_id or not cve_id.startswith('CVE-'):
+            return vulnerability
+        
+        try:
+            # Récupérer les données NIST (depuis cache ou API)
+            nist_data = self.nist_cache.get(cve_id)
+            
+            if not nist_data:
+                # Appel API NIST (votre code existant)
+                # nist_data = self._call_nist_api(cve_id)
+                pass
+            
+            if nist_data:
+                # ⚡ FILTRER pour garder UN SEUL lien
+                references = nist_data.get('references', [])
+                solution_url = self._filter_nist_references(references)
+                
+                # Enrichir avec données essentielles SEULEMENT
+                vulnerability['nist_data'] = {
+                    'cvss_score': nist_data.get('cvss_score'),
+                    'severity': nist_data.get('severity'),
+                    'description': nist_data.get('description', '')[:500],  # Limiter
+                    'solution_url': solution_url,  # UN SEUL LIEN
+                    'published_date': nist_data.get('published_date'),
+                    'last_modified': nist_data.get('last_modified')
+                }
+                
+                # NE PAS inclure toutes les références
+                # vulnerability['references'] = references  # ← SUPPRIMÉ
+        
+        except Exception as e:
+            self.logger.warning(f"Erreur enrichissement NIST {cve_id}: {e}")
+        
+        return vulnerability
+
 
 class Analyzer:
     """
-    Analyseur IA de vulnérabilités
+    Analyseur IA de vulnérabilités avec intégration NIST et OpenAI
 
-    Cette classe orchestre l'analyse des vulnérabilités en utilisant
-    des modèles d'IA pour fournir des insights contextuels et des
-    recommandations de remédiation priorisées.
+    Workflow:
+    1. Reçoit les CVE détectées par NSE
+    2. Enrichit avec NIST (scores officiels + liens solutions)
+    3. Fait expliquer les solutions par OpenAI en français
     """
 
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         """
-        Initialise l'analyseur IA
+        Initialise l'analyseur
 
         Args:
-            config: Configuration personnalisée (optionnel)
+            config: Configuration personnalisée (optionnelle)
         """
         self.config = config or get_config()
-        self.llm_config = get_llm_config("openai")  # Par défaut OpenAI
-
-        # État de l'analyseur
         self.is_ready = False
-        self.current_provider = None
-        self.client = None
-
-        # Base de données pour historique
-        self.db = Database()
 
         # Statistiques
         self.stats = {
             "total_analyses": 0,
             "successful_analyses": 0,
             "failed_analyses": 0,
-            "average_processing_time": 0.0
+            "average_processing_time": 0.0,
+            "nist_api_calls": 0,
+            "nist_cache_hits": 0
         }
 
-        # Initialiser le client IA
-        self._initialize_ai_client()
+        # Initialiser les clients IA
+        self._init_llm_clients()
 
-    def _initialize_ai_client(self):
-        """Initialise le client IA selon la configuration"""
-        try:
-            provider = self.llm_config.get("provider", "openai")
+        # Initialiser le cache NIST
+        self.nist_cache = NISTCache()
+        self.nist_api_key = self.config.get('nist_api_key')
 
-            if provider == "openai":
-                self._setup_openai_client()
-            elif provider == "ollama":
-                self._setup_ollama_client()
-            elif provider == "anthropic":
-                self._setup_anthropic_client()
-            else:
-                raise AnalyzerException(
-                    f"Fournisseur IA non supporté: {provider}",
-                    CoreErrorCodes.INVALID_CONFIGURATION
-                )
+        # Nettoyer le vieux cache au démarrage
+        self.nist_cache.clear_old()
 
-            self.current_provider = provider
-            self.is_ready = True
-            logger.info(f"Client IA initialisé: {provider}")
+        self.is_ready = True
+        logger.info("✅ Analyzer initialisé (NIST + OpenAI)")
 
-        except Exception as e:
-            logger.error(f"Erreur initialisation client IA: {e}")
-            raise AnalyzerException(
-                f"Impossible d'initialiser le client IA: {str(e)}",
-                CoreErrorCodes.AI_SERVICE_ERROR
-            )
-
-    def _setup_openai_client(self):
-        """Configure le client OpenAI"""
-        api_key = self.config.openai_api_key
+    def _init_llm_clients(self):
+        """Initialise le client OpenAI"""
+        # Configuration OpenAI uniquement
+        api_key = self.config.get('openai_api_key') or os.getenv('OPENAI_API_KEY')
         if not api_key:
             raise AnalyzerException(
                 "Clé API OpenAI manquante",
@@ -171,32 +308,139 @@ class Analyzer:
             )
 
         self.client = AsyncOpenAI(api_key=api_key)
-        logger.debug("Client OpenAI configuré")
+        self.model = self.config.get('openai_model', 'gpt-4')
+        logger.info(f"Client OpenAI initialisé (modèle: {self.model})")
 
-    def _setup_ollama_client(self):
-        """Configure le client Ollama"""
-        base_url = self.llm_config.get("base_url", "http://localhost:11434")
+    # ========================================================================
+    # MÉTHODE BATCH - NOUVELLE
+    # ========================================================================
 
-        # Vérifier que Ollama est accessible
-        try:
-            response = requests.get(f"{base_url}/api/tags", timeout=5)
-            response.raise_for_status()
-        except requests.exceptions.RequestException as e:
+    async def analyze_vulnerabilities_batch(
+            self,
+            vulnerabilities_data: List[Dict[str, Any]],
+            target_system: str = "Unknown System",
+            business_context: Optional[Dict[str, Any]] = None,
+            batch_size: int = 10
+    ) -> AnalysisResult:
+        """
+        Analyse les vulnérabilités par batch pour éviter les limites OpenAI
+
+        Cette fonction divise les vulnérabilités en petits groupes et les analyse
+        séparément, puis fusionne tous les résultats.
+
+        Args:
+            vulnerabilities_data: Liste des CVE détectées (peut être très grande)
+            target_system: Nom du système cible
+            business_context: Contexte business optionnel
+            batch_size: Nombre de vulnérabilités par batch (défaut: 10)
+
+        Returns:
+            AnalysisResult: Résultat complet fusionné de tous les batches
+        """
+        start_time = time.time()
+        analysis_id = f"analysis_batch_{int(time.time())}"
+
+        if not self.is_ready:
             raise AnalyzerException(
-                f"Ollama non accessible à {base_url}: {str(e)}",
-                CoreErrorCodes.AI_SERVICE_ERROR
+                "Analyzer non initialisé",
+                CoreErrorCodes.MODULE_NOT_READY
             )
 
-        self.client = {"base_url": base_url, "type": "ollama"}
-        logger.debug(f"Client Ollama configuré: {base_url}")
+        if not vulnerabilities_data:
+            raise AnalyzerException(
+                "Liste de vulnérabilités vide",
+                CoreErrorCodes.INVALID_VULNERABILITY_DATA
+            )
 
-    def _setup_anthropic_client(self):
-        """Configure le client Anthropic"""
-        # TODO: Implémenter le support Anthropic Claude
-        raise AnalyzerException(
-            "Support Anthropic pas encore implémenté",
-            CoreErrorCodes.AI_SERVICE_ERROR
+        total_vulns = len(vulnerabilities_data)
+        logger.info(f"🔍 Analyse par batch: {total_vulns} vulnérabilités, batch_size={batch_size}")
+
+        # Diviser en batches
+        batches = [
+            vulnerabilities_data[i:i + batch_size]
+            for i in range(0, total_vulns, batch_size)
+        ]
+
+        logger.info(f"📦 {len(batches)} batches à traiter")
+
+        # Listes pour fusionner les résultats
+        all_vulnerabilities = []
+        total_nist_calls = 0
+        total_nist_cache_hits = 0
+
+        # Traiter chaque batch
+        for i, batch in enumerate(batches, 1):
+            logger.info(f"🔄 Traitement batch {i}/{len(batches)} ({len(batch)} vulnérabilités)")
+
+            try:
+                # Analyser ce batch avec la fonction normale
+                batch_result = await self.analyze_vulnerabilities(
+                    vulnerabilities_data=batch,
+                    target_system=f"{target_system} (batch {i}/{len(batches)})",
+                    business_context=business_context
+                )
+
+                # Collecter les résultats
+                all_vulnerabilities.extend(batch_result.vulnerabilities)
+                total_nist_calls += batch_result.nist_call_count
+                total_nist_cache_hits += batch_result.nist_cache_hits
+
+                logger.info(f"✅ Batch {i}/{len(batches)} terminé ({len(batch_result.vulnerabilities)} vulns)")
+
+                # Pause entre les batches pour éviter rate limit (2 secondes)
+                if i < len(batches):
+                    logger.debug(f"⏸️  Pause 2s avant batch suivant...")
+                    await asyncio.sleep(2)
+
+            except Exception as e:
+                logger.error(f"❌ Erreur batch {i}/{len(batches)}: {e}")
+                # Continuer avec les autres batches au lieu de tout arrêter
+                continue
+
+        # Générer le plan de remédiation global
+        logger.info("📋 Génération plan de remédiation global...")
+        remediation_plan = await self._generate_remediation_plan(
+            all_vulnerabilities,
+            business_context
         )
+
+        # Calculer les métriques globales
+        analysis_summary = self._generate_analysis_summary(all_vulnerabilities)
+        confidence_score = self._calculate_confidence_score(all_vulnerabilities)
+
+        processing_time = time.time() - start_time
+
+        # Créer le résultat final fusionné
+        result = AnalysisResult(
+            analysis_id=analysis_id,
+            target_system=target_system,
+            analyzed_at=datetime.utcnow(),
+            analysis_summary=analysis_summary,
+            vulnerabilities=all_vulnerabilities,
+            remediation_plan=remediation_plan,
+            ai_model_used=self._get_model_name(),
+            confidence_score=confidence_score,
+            processing_time=processing_time,
+            business_context=business_context,
+            nist_enriched=True,  # Toujours true si on a traité des batches
+            nist_call_count=total_nist_calls,
+            nist_cache_hits=total_nist_cache_hits
+        )
+
+        # Mettre à jour les stats
+        self._update_stats(success=True, processing_time=processing_time)
+
+        logger.info(f"✅ Analyse batch complète terminée en {processing_time:.2f}s")
+        logger.info(f"   • Total vulnérabilités: {len(all_vulnerabilities)}")
+        logger.info(f"   • Batches traités: {len(batches)}")
+        logger.info(f"   • NIST calls: {total_nist_calls}")
+        logger.info(f"   • Cache hits: {total_nist_cache_hits}")
+
+        return result
+
+    # ========================================================================
+    # MÉTHODE PRINCIPALE D'ANALYSE - ORIGINALE
+    # ========================================================================
 
     async def analyze_vulnerabilities(
             self,
@@ -205,550 +449,514 @@ class Analyzer:
             business_context: Optional[Dict[str, Any]] = None
     ) -> AnalysisResult:
         """
-        Analyse des vulnérabilités avec l'IA
+        Analyse complète des vulnérabilités avec workflow NIST
 
         Args:
-            vulnerabilities_data: Liste des vulnérabilités à analyser
-            target_system: Système cible pour le contexte
+            vulnerabilities_data: Liste des CVE détectées par NSE
+            target_system: Nom du système cible
             business_context: Contexte business optionnel
 
         Returns:
-            AnalysisResult: Résultats d'analyse complets
-
-        Raises:
-            AnalyzerException: Si l'analyse échoue
+            AnalysisResult: Résultat complet de l'analyse
         """
+        start_time = time.time()
+        analysis_id = f"analysis_{int(time.time())}"
+
         if not self.is_ready:
             raise AnalyzerException(
-                "Analyseur non initialisé",
+                "Analyzer non initialisé",
                 CoreErrorCodes.MODULE_NOT_READY
             )
 
         if not vulnerabilities_data:
             raise AnalyzerException(
-                "Aucune donnée de vulnérabilité fournie",
+                "Liste de vulnérabilités vide",
                 CoreErrorCodes.INVALID_VULNERABILITY_DATA
             )
 
-        start_time = time.time()
-        analysis_id = f"analysis_{int(time.time())}"
+        logger.info(f"🔍 Démarrage analyse: {len(vulnerabilities_data)} vulnérabilités")
 
         try:
-            logger.info(f"Début analyse {analysis_id} - {len(vulnerabilities_data)} vulnérabilités")
+            # ÉTAPE 1 : Enrichir avec NIST
+            logger.info("📊 Enrichissement NIST...")
+            nist_enricher = NISTEnricher(api_key=self.nist_api_key)
 
-            # AJOUT: Log de debug
-            logger.info("🔍 ÉTAPE 1: Formatage des données...")
-            formatted_data = self._format_vulnerabilities_for_ai(vulnerabilities_data)
-            logger.info(f"✅ ÉTAPE 1: OK - {len(formatted_data)} caractères")
+            for vuln in vulnerabilities_data:
+                if "cve_id" in vuln:
+                    nist_data = await nist_enricher.enrich_cve(vuln["cve_id"])
 
-            logger.info("🔍 ÉTAPE 2: Appel IA...")
-            analyzed_vulnerabilities = await self._analyze_individual_vulnerabilities(
-                formatted_data, target_system
-            )
-            logger.info(f"✅ ÉTAPE 2: OK - {len(analyzed_vulnerabilities)} vulnérabilités")
+                    if nist_data:
+                        vuln["cvss_score"] = nist_data["cvss_score"]
+                        vuln["severity"] = nist_data["severity"]
+                        vuln["nist_description"] = nist_data["description"]
+                        vuln["solution_links"] = nist_data["solution_links"]
+                        vuln["references"] = nist_data["references"]
+                        vuln["is_nist_enriched"] = True
 
-            # Étape 2: Évaluation de priorité globale
+                        # Incrémenter les stats
+                        if vuln["cve_id"] in nist_enricher.cache:
+                            self.stats["nist_cache_hits"] += 1
+                        else:
+                            self.stats["nist_api_calls"] += 1
+                    else:
+                        vuln["is_nist_enriched"] = False
+
+            # ÉTAPE 2 : Analyser avec IA
+            logger.info("🤖 Analyse IA...")
+            analyzed_vulns = await self._analyze_with_ai(vulnerabilities_data, business_context)
+
+            # ÉTAPE 3 : Générer le plan de remédiation
+            logger.info("📋 Génération plan de remédiation...")
             remediation_plan = await self._generate_remediation_plan(
-                analyzed_vulnerabilities, business_context
+                analyzed_vulns,
+                business_context
             )
 
-            # Étape 3: Génération du résumé exécutif
-            analysis_summary = await self._generate_analysis_summary(
-                analyzed_vulnerabilities, remediation_plan
-            )
+            # ÉTAPE 4 : Calculer les métriques
+            analysis_summary = self._generate_analysis_summary(analyzed_vulns)
+            confidence_score = self._calculate_confidence_score(analyzed_vulns)
 
-            # Calculer les métrics
             processing_time = time.time() - start_time
-            confidence_score = self._calculate_confidence_score(analyzed_vulnerabilities)
 
-            # Créer le résultat
+            # Créer le résultat final
             result = AnalysisResult(
                 analysis_id=analysis_id,
                 target_system=target_system,
                 analyzed_at=datetime.utcnow(),
                 analysis_summary=analysis_summary,
-                vulnerabilities=analyzed_vulnerabilities,
+                vulnerabilities=analyzed_vulns,
                 remediation_plan=remediation_plan,
                 ai_model_used=self._get_model_name(),
                 confidence_score=confidence_score,
-                processing_time=processing_time
+                processing_time=processing_time,
+                business_context=business_context,
+                nist_enriched=any(v.get("is_nist_enriched", False) for v in vulnerabilities_data),
+                nist_call_count=self.stats["nist_api_calls"],
+                nist_cache_hits=self.stats["nist_cache_hits"]
             )
 
-            # Sauvegarder dans la base de données
-            await self._save_analysis_result(result)
+            # Mettre à jour les stats
+            self._update_stats(success=True, processing_time=processing_time)
 
-            # Mettre à jour les statistiques
-            self._update_stats(True, processing_time)
+            logger.info(f"✅ Analyse terminée en {processing_time:.2f}s")
 
-            logger.info(f"Analyse terminée: {analysis_id} ({processing_time:.2f}s)")
             return result
 
         except Exception as e:
-            self._update_stats(False, time.time() - start_time)
-            logger.error(f"Erreur analyse {analysis_id}: {e}")
+            processing_time = time.time() - start_time
+            self._update_stats(success=False, processing_time=processing_time)
 
-            if isinstance(e, AnalyzerException):
-                raise
-            else:
-                raise AnalyzerException(
-                    f"Erreur lors de l'analyse: {str(e)}",
-                    CoreErrorCodes.ANALYSIS_FAILED
-                )
+            logger.error(f"❌ Erreur analyse: {e}")
+            raise AnalyzerException(
+                f"Erreur lors de l'analyse: {str(e)}",
+                CoreErrorCodes.AI_SERVICE_ERROR,
+                {"original_error": str(e)}
+            )
 
-    def _format_vulnerabilities_for_ai(self, vulnerabilities: List[Dict[str, Any]]) -> str:
-        """Formate les vulnérabilités pour l'IA"""
-        formatted = []
+    # ========================================================================
+    # PARTIE IA : Analyse avec OpenAI
+    # ========================================================================
 
-        for vuln in vulnerabilities:
-            vuln_text = f"""
-Vulnérabilité: {vuln.get('name', 'Unknown')}
-CVE: {vuln.get('cve_id', 'N/A')}
-Gravité: {vuln.get('severity', 'Unknown')}
-Score CVSS: {vuln.get('cvss_score', 'N/A')}
-Service: {vuln.get('affected_service', 'Unknown')}
-Ports: {', '.join(map(str, vuln.get('ports', [])))}
-Description: {vuln.get('description', 'Pas de description')}
-"""
-            formatted.append(vuln_text.strip())
-
-        return "\n\n---\n\n".join(formatted)
-
-    async def _analyze_individual_vulnerabilities(
+    async def _analyze_with_ai(
             self,
-            vulnerabilities_data: str,
-            target_system: str
+            vulnerabilities: List[Dict],
+            business_context: Optional[Dict]
     ) -> List[VulnerabilityAnalysis]:
-        """Analyse détaillée de chaque vulnérabilité"""
+        """Analyse les vulnérabilités avec OpenAI"""
 
         # Préparer le prompt
-        prompt = format_vulnerability_prompt(
-            os_info=target_system,
-            services="Services détectés lors du scan",
-            open_ports="Ports ouverts détectés",
-            vulnerabilities_data=vulnerabilities_data
-        )
+        prompt = self._build_analysis_prompt(vulnerabilities, business_context)
 
-        # Analyser avec l'IA
-        ai_response = await self._call_ai_model(prompt)
+        # Appeler OpenAI
+        response = await self._call_openai(prompt)
 
-        # Parser la réponse JSON avec gestion d'erreur robuste
-        try:
-            logger.debug(f"Réponse IA brute (200 premiers chars): {ai_response[:200] if ai_response else 'VIDE'}")
-
-            if not ai_response or not ai_response.strip():
-                logger.error("Réponse IA vide")
-                return self._create_default_analysis(vulnerabilities_data)
-
-            # Nettoyer la réponse
-            clean_response = ai_response.strip()
-
-            # Cas 1: Réponse avec ```json
-            if '```json' in clean_response.lower():
-                start = clean_response.lower().find('```json') + 7
-                end = clean_response.find('```', start)
-                if end > start:
-                    clean_response = clean_response[start:end].strip()
-
-            # Cas 2: Réponse avec ``` simple
-            elif clean_response.startswith('```'):
-                start_idx = clean_response.find('{')
-                end_idx = clean_response.rfind('}') + 1
-                if start_idx != -1 and end_idx > start_idx:
-                    clean_response = clean_response[start_idx:end_idx]
-
-            # Cas 3: Trouver juste le JSON si pas de backticks
-            elif not clean_response.startswith('{'):
-                start_idx = clean_response.find('{')
-                end_idx = clean_response.rfind('}') + 1
-                if start_idx != -1 and end_idx > start_idx:
-                    clean_response = clean_response[start_idx:end_idx]
-
-            logger.debug(f"JSON nettoyé (200 premiers chars): {clean_response[:200]}")
-
-            # Parser le JSON
-            analysis_data = None
-            try:
-                analysis_data = json.loads(clean_response)
-            except json.JSONDecodeError as parse_error:
-                logger.error(f"Erreur JSON parsing: {parse_error}")
-                logger.error(f"Position: {parse_error.pos}")
-                logger.error(f"Ligne: {parse_error.lineno}")
-
-                # Log plus de contexte
-                error_context_start = max(0, parse_error.pos - 100)
-                error_context_end = min(len(clean_response), parse_error.pos + 100)
-                logger.error(f"Contexte erreur: ...{clean_response[error_context_start:error_context_end]}...")
-
-                # Essayer de réparer le JSON
-                try:
-                    clean_response = self._try_fix_json(clean_response)
-                    analysis_data = json.loads(clean_response)
-                    logger.info("✅ JSON réparé avec succès")
-                except Exception as fix_error:
-                    logger.error(f"Impossible de réparer le JSON: {fix_error}")
-                    logger.warning("Utilisation d'une analyse par défaut")
-                    return self._create_default_analysis(vulnerabilities_data)
-
-            # Vérifier la structure
-            if not analysis_data:
-                logger.error("analysis_data est None après parsing")
-                return self._create_default_analysis(vulnerabilities_data)
-
-            if 'vulnerabilities' not in analysis_data:
-                logger.warning("Clé 'vulnerabilities' manquante dans la réponse")
-                # Si la réponse contient directement une liste, l'utiliser
-                if isinstance(analysis_data, list):
-                    analysis_data = {'vulnerabilities': analysis_data}
-                else:
-                    analysis_data = {
-                        'vulnerabilities': [],
-                        'analysis_summary': analysis_data.get('analysis_summary', {}),
-                        'remediation_plan': analysis_data.get('remediation_plan', {})
-                    }
-
-            return self._parse_vulnerability_analysis(analysis_data)
-
-        except json.JSONDecodeError as e:
-            logger.error(f"Erreur parsing JSON après tous les essais: {e}")
-            logger.error(f"Réponse complète (1000 chars): {ai_response[:1000] if ai_response else 'VIDE'}")
-            logger.warning("Création d'une analyse par défaut")
-            return self._create_default_analysis(vulnerabilities_data)
-
-        except Exception as e:
-            logger.error(f"Erreur inattendue lors du parsing: {e}")
-            logger.error(f"Type: {type(e).__name__}")
-            import traceback
-            logger.error(f"Traceback: {traceback.format_exc()}")
-            # Ne pas raise, mais créer une analyse par défaut
-            logger.warning("Création d'une analyse par défaut suite à l'erreur")
-            return self._create_default_analysis(vulnerabilities_data)
-
-    def _try_fix_json(self, json_str: str) -> str:
-        """Essaie de réparer un JSON mal formé"""
-        import re
-
-        logger.debug("Tentative de réparation du JSON...")
-
-        # Enlever les commentaires JavaScript
-        json_str = re.sub(r'//.*?\n', '\n', json_str)
-        json_str = re.sub(r'/\*.*?\*/', '', json_str, flags=re.DOTALL)
-
-        # Remplacer les simples quotes par des doubles
-        json_str = json_str.replace("'", '"')
-
-        # Enlever les virgules en trop avant } ou ]
-        json_str = re.sub(r',\s*([}\]])', r'\1', json_str)
-
-        # Ajouter des virgules manquantes entre les propriétés
-        json_str = re.sub(r'"\s*\n\s*"', '",\n"', json_str)
-
-        # Réparer les retours à la ligne dans les strings
-        # Trouver les strings et remplacer les \n par des espaces
-        def fix_newlines_in_strings(match):
-            return match.group(0).replace('\n', ' ')
-
-        # Ne pas toucher aux \n échappés, mais remplacer les \n réels dans les strings
-        json_str = re.sub(r'"[^"]*"', lambda m: m.group(0).replace('\n', '\\n'), json_str)
-
-        logger.debug(f"JSON après réparation (200 premiers chars): {json_str[:200]}")
-
-        return json_str
-
-    def _create_default_analysis(self, vulnerabilities_data: str) -> List[VulnerabilityAnalysis]:
-        """Crée une analyse par défaut en cas d'échec du parsing"""
-        logger.info("Création d'une analyse par défaut basique")
-
-        vulnerabilities = []
-        import re
-        cve_pattern = r'CVE-\d{4}-\d{4,}'
-        cves = re.findall(cve_pattern, vulnerabilities_data)
-
-        for i, cve in enumerate(cves[:10]):
-            vuln = VulnerabilityAnalysis(
-                vulnerability_id=cve,
-                name=f"Vulnerability {cve}",
-                severity="MEDIUM",
-                cvss_score=5.0,
-                impact_analysis="Analyse automatique indisponible - parsing IA échoué",
-                exploitability="UNKNOWN",
-                priority_score=50,
-                affected_service="Unknown",
-                recommended_actions=["Consulter les références CVE", "Mettre à jour le service"],
-                dependencies=[],
-                references=[f"https://nvd.nist.gov/vuln/detail/{cve}"]
-            )
-            vulnerabilities.append(vuln)
-
-        return vulnerabilities
-
-    def _parse_vulnerability_analysis(self, analysis_data: Dict[str, Any]) -> List[VulnerabilityAnalysis]:
-        """Parse les données d'analyse en objets VulnerabilityAnalysis"""
-        vulnerabilities = []
-
-        for vuln_data in analysis_data.get("vulnerabilities", []):
-            vulnerability = VulnerabilityAnalysis(
-                vulnerability_id=vuln_data.get("id", "unknown"),
-                name=vuln_data.get("name", "Unknown"),
-                severity=vuln_data.get("severity", "UNKNOWN"),
-                cvss_score=float(vuln_data.get("cvss_score", 0.0)),
-                impact_analysis=vuln_data.get("impact_analysis", ""),
-                exploitability=vuln_data.get("exploitability", "UNKNOWN"),
-                priority_score=int(vuln_data.get("priority_score", 5)),
-                affected_service=vuln_data.get("affected_service", "Unknown"),
-                recommended_actions=vuln_data.get("recommended_actions", []),
-                dependencies=vuln_data.get("dependencies", []),
-                references=vuln_data.get("references", [])
-            )
-            vulnerabilities.append(vulnerability)
-
-        return vulnerabilities
-
-    async def _generate_remediation_plan(
-            self,
-            vulnerabilities: List[VulnerabilityAnalysis],
-            business_context: Optional[Dict[str, Any]]
-    ) -> Dict[str, Any]:
-        """Génère un plan de remédiation priorisé"""
-
-        # Préparer les données des vulnérabilités
-        vulns_summary = []
-        for vuln in vulnerabilities:
-            vulns_summary.append({
-                "id": vuln.vulnerability_id,
-                "name": vuln.name,
-                "severity": vuln.severity,
-                "priority_score": vuln.priority_score,
-                "recommended_actions": vuln.recommended_actions
-            })
-
-        # Contexte business par défaut
-        if not business_context:
-            business_context = {
-                "budget_constraints": "Budget limité",
-                "maintenance_window": "Week-end uniquement",
-                "critical_services": "Services web",
-                "risk_tolerance": "Faible"
-            }
-
-        # Préparer le prompt de priorisation
-        prompt = format_priority_assessment_prompt(
-            vulnerabilities_list=json.dumps(vulns_summary, indent=2),
-            **business_context
-        )
-
-        # Analyser avec l'IA
-        ai_response = await self._call_ai_model(prompt)
-
-        try:
-            return json.loads(ai_response)
-        except json.JSONDecodeError:
-            logger.warning("Erreur parsing plan remédiation, utilisation du plan par défaut")
-            return self._generate_default_remediation_plan(vulnerabilities)
-
-    def _generate_default_remediation_plan(
-            self,
-            vulnerabilities: List[VulnerabilityAnalysis]
-    ) -> Dict[str, Any]:
-        """Génère un plan de remédiation par défaut"""
-
-        sorted_vulns = sorted(vulnerabilities, key=lambda v: v.priority_score, reverse=True)
-
-        immediate = [v.vulnerability_id for v in sorted_vulns if v.priority_score >= 8]
-        short_term = [v.vulnerability_id for v in sorted_vulns if 5 <= v.priority_score < 8]
-        long_term = [v.vulnerability_id for v in sorted_vulns if v.priority_score < 5]
-
-        return {
-            "executive_summary": {
-                "total_vulnerabilities": len(vulnerabilities),
-                "immediate_action_required": len(immediate),
-                "estimated_total_effort": f"{len(vulnerabilities) * 2} heures",
-                "business_risk_level": "MEDIUM"
-            },
-            "implementation_roadmap": {
-                "phase_1_immediate": {
-                    "vulnerabilities": immediate,
-                    "duration": "24-48h",
-                    "resources_needed": ["Administrateur système"]
-                },
-                "phase_2_short_term": {
-                    "vulnerabilities": short_term,
-                    "duration": "1-2 semaines",
-                    "resources_needed": ["Équipe technique"]
-                },
-                "phase_3_long_term": {
-                    "vulnerabilities": long_term,
-                    "duration": "1+ mois",
-                    "resources_needed": ["Planification stratégique"]
-                }
-            },
-            "recommendations": [
-                "Commencer par les vulnérabilités critiques",
-                "Planifier les fenêtres de maintenance",
-                "Tester les correctifs en environnement de développement"
-            ]
-        }
-
-    async def _generate_analysis_summary(
-            self,
-            vulnerabilities: List[VulnerabilityAnalysis],
-            remediation_plan: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """Génère un résumé exécutif de l'analyse"""
-
-        total_vulns = len(vulnerabilities)
-        severity_counts = {
-            "critical": len([v for v in vulnerabilities if v.severity == "CRITICAL"]),
-            "high": len([v for v in vulnerabilities if v.severity == "HIGH"]),
-            "medium": len([v for v in vulnerabilities if v.severity == "MEDIUM"]),
-            "low": len([v for v in vulnerabilities if v.severity == "LOW"])
-        }
-
-        if vulnerabilities:
-            risk_scores = [v.cvss_score for v in vulnerabilities if v.cvss_score > 0]
-            overall_risk = sum(risk_scores) / len(risk_scores) if risk_scores else 0.0
-        else:
-            overall_risk = 0.0
-
-        return {
-            "total_vulnerabilities": total_vulns,
-            "critical_count": severity_counts["critical"],
-            "high_count": severity_counts["high"],
-            "medium_count": severity_counts["medium"],
-            "low_count": severity_counts["low"],
-            "overall_risk_score": round(overall_risk, 1),
-            "immediate_actions_required": remediation_plan.get("executive_summary", {}).get("immediate_action_required",
-                                                                                            0),
-            "estimated_remediation_time": remediation_plan.get("executive_summary", {}).get("estimated_total_effort",
-                                                                                            "Unknown"),
-            "top_priority_vulnerabilities": [
-                v.vulnerability_id for v in sorted(vulnerabilities, key=lambda x: x.priority_score, reverse=True)[:3]
-            ]
-        }
-
-    async def _call_ai_model(self, prompt: str) -> str:
-        """Appelle le modèle IA avec le prompt donné"""
-
-        if self.current_provider == "openai":
-            return await self._call_openai(prompt)
-        elif self.current_provider == "ollama":
-            return await self._call_ollama(prompt)
-        else:
-            raise AnalyzerException(
-                f"Fournisseur non supporté: {self.current_provider}",
-                CoreErrorCodes.AI_SERVICE_ERROR
-            )
+        # Parser la réponse
+        return self._parse_ai_response(response, vulnerabilities)
 
     async def _call_openai(self, prompt: str) -> str:
-        """Appelle l'API OpenAI"""
+        """Appelle OpenAI"""
         try:
             response = await self.client.chat.completions.create(
-                model=self.llm_config.get("model", "gpt-4"),
+                model=self.model,
                 messages=[
-                    {
-                        "role": "system",
-                        "content": "Tu es un expert en cybersécurité spécialisé dans l'analyse de vulnérabilités. Réponds toujours en JSON valide."
-                    },
+                    {"role": "system", "content": self._get_system_prompt()},
                     {"role": "user", "content": prompt}
                 ],
-                max_tokens=self.llm_config.get("max_tokens", 2000),
-                temperature=self.llm_config.get("temperature", 0.3),
-                timeout=self.llm_config.get("timeout", 60)
+                temperature=0.3,
+                max_tokens=4000
             )
 
             return response.choices[0].message.content
 
-        except openai.APITimeoutError:
+        except OpenAIError as e:
             raise AnalyzerException(
-                "Timeout de l'API OpenAI",
-                CoreErrorCodes.ANALYSIS_TIMEOUT
-            )
-        except openai.RateLimitError:
-            raise AnalyzerException(
-                "Quota API OpenAI dépassé",
-                CoreErrorCodes.AI_QUOTA_EXCEEDED
-            )
-        except Exception as e:
-            logger.error(f"Erreur API OpenAI: {e}")
-            raise AnalyzerException(
-                f"Erreur API OpenAI: {str(e)}",
+                f"Erreur OpenAI: {str(e)}",
                 CoreErrorCodes.AI_SERVICE_ERROR
             )
 
-    async def _call_ollama(self, prompt: str) -> str:
-        """Appelle l'API Ollama"""
+    def _get_system_prompt(self) -> str:
+        """Prompt système pour l'IA"""
+        return """Tu es un expert en cybersécurité spécialisé dans l'analyse de vulnérabilités.
+
+🎯 TON RÔLE :
+Tu reçois des CVE avec leurs scores CVSS et gravités déjà calculés par NIST.
+Tu dois analyser l'impact et donner des recommandations.
+
+❌ RÈGLES IMPORTANTES :
+- Si tu ne connais pas une valeur, utilise 0 pour les nombres, "UNKNOWN" pour les textes
+- NE JAMAIS mettre "None" ou null dans les valeurs numériques
+- Tous les scores doivent être des nombres (0.0 à 10.0)
+- Toutes les gravités doivent être: CRITICAL, HIGH, MEDIUM, LOW, ou UNKNOWN
+
+📋 FORMAT DE RÉPONSE (JSON strict) :
+```json
+{
+  "vulnerabilities": [
+    {
+      "vulnerability_id": "CVE-XXXX-XXXX",
+      "name": "Nom de la vulnérabilité",
+      "severity": "CRITICAL",
+      "cvss_score": 9.8,
+      "impact_analysis": "Description de l'impact",
+      "exploitability": "HIGH",
+      "priority_score": 10,
+      "affected_service": "Service concerné",
+      "recommended_actions": ["Action 1", "Action 2"],
+      "dependencies": [],
+      "references": []
+    }
+  ]
+}
+```
+
+IMPORTANT : Réponds UNIQUEMENT avec ce JSON, sans texte avant ou après."""
+
+    def _build_analysis_prompt(
+            self,
+            vulnerabilities: List[Dict],
+            business_context: Optional[Dict]
+    ) -> str:
+        """Construit le prompt d'analyse"""
+
+        prompt = "Analyse ces vulnérabilités détectées:\n\n"
+
+        for i, vuln in enumerate(vulnerabilities, 1):
+            cve_id = vuln.get('cve_id', 'N/A')
+            service = vuln.get('service', 'inconnu')
+            version = vuln.get('service_version', 'inconnue')
+            port = vuln.get('port', 'inconnu')
+            cvss = vuln.get('cvss_score', 'N/A')
+            severity = vuln.get('severity', 'UNKNOWN')
+            nist_verified = vuln.get('is_nist_enriched', False)
+            solution_links = vuln.get('solution_links', [])
+
+            prompt += f"""
+═══════════════════════════════════════════════════════════
+Vulnérabilité #{i}
+═══════════════════════════════════════════════════════════
+CVE : {cve_id}
+Service : {service} (version {version})
+Port : {port}
+Score CVSS : {cvss} {'✅ (NIST officiel)' if nist_verified else '⚠️ (non vérifié)'}
+Gravité : {severity} {'✅ (NIST officielle)' if nist_verified else '⚠️ (non vérifiée)'}
+"""
+
+            if vuln.get('nist_description'):
+                prompt += f"\nDescription NIST :\n{vuln['nist_description'][:300]}...\n"
+
+            if solution_links:
+                prompt += "\nLiens de solutions NIST :\n"
+                for link in solution_links:
+                    prompt += f"- {link}\n"
+
+            prompt += "\n"
+
+        if business_context:
+            prompt += f"\n📊 Contexte business :\n{json.dumps(business_context, indent=2)}\n"
+
+        prompt += """
+═══════════════════════════════════════════════════════════
+TÂCHES :
+═══════════════════════════════════════════════════════════
+Analyse chaque vulnérabilité et réponds en JSON avec le format spécifié.
+NE MODIFIE PAS les scores CVSS et gravités fournis par NIST.
+"""
+
+        return prompt
+
+    def _parse_ai_response(
+            self,
+            response: str,
+            original_vulns: List[Dict]
+    ) -> List[VulnerabilityAnalysis]:
+        """Parse la réponse de l'IA"""
         try:
-            base_url = self.client["base_url"]
-            model = self.llm_config.get("model", "llama3")
+            # Nettoyer la réponse (enlever markdown, etc.)
+            cleaned = response.strip()
+            if cleaned.startswith("```json"):
+                cleaned = cleaned[7:]
+            if cleaned.startswith("```"):
+                cleaned = cleaned[3:]
+            if cleaned.endswith("```"):
+                cleaned = cleaned[:-3]
+            cleaned = cleaned.strip()
 
-            data = {
-                "model": model,
-                "prompt": prompt,
-                "stream": False,
-                "options": {
-                    "temperature": self.llm_config.get("temperature", 0.3),
-                    "num_predict": self.llm_config.get("max_tokens", 2000)
-                }
-            }
+            # Parser le JSON
+            data = json.loads(cleaned)
 
-            async with asyncio.timeout(self.llm_config.get("timeout", 60)):
-                response = requests.post(
-                    f"{base_url}/api/generate",
-                    json=data,
-                    timeout=30
+            # Extraire les vulnérabilités
+            vulnerabilities = data.get('vulnerabilities', [])
+
+            if not vulnerabilities:
+                raise ValueError("Aucune vulnérabilité dans la réponse IA")
+
+            # Créer les objets VulnerabilityAnalysis
+            analyses = []
+
+            for i, vuln_data in enumerate(vulnerabilities):
+                # Récupérer les données NIST originales
+                original = original_vulns[i] if i < len(original_vulns) else {}
+
+                # Créer l'analyse avec gestion robuste des None
+                analysis = VulnerabilityAnalysis(
+                    vulnerability_id=vuln_data.get('vulnerability_id') or original.get('cve_id') or f'VULN-{i}',
+                    name=vuln_data.get('name') or original.get('name') or 'Unknown',
+                    severity=vuln_data.get('severity') or original.get('severity') or 'UNKNOWN',
+                    cvss_score=float(vuln_data.get('cvss_score') or original.get('cvss_score') or 0.0),
+                    impact_analysis=vuln_data.get('impact_analysis') or 'N/A',
+                    exploitability=vuln_data.get('exploitability') or 'UNKNOWN',
+                    priority_score=int(vuln_data.get('priority_score') or 5),
+                    affected_service=vuln_data.get('affected_service') or original.get('service') or 'Unknown',
+                    recommended_actions=vuln_data.get('recommended_actions') or [],
+                    dependencies=vuln_data.get('dependencies') or [],
+                    references=vuln_data.get('references') or original.get('references') or [],
+
+                    # Données NIST
+                    nist_verified=original.get('is_nist_enriched', False),
+                    nist_url=f"https://nvd.nist.gov/vuln/detail/{original.get('cve_id', '')}" if original.get(
+                        'cve_id') else None,
+                    solution_links=original.get('solution_links', []),
+
+                    # Explications IA
+                    ai_explanation=vuln_data.get('ai_explanation'),
+                    correction_script=vuln_data.get('correction_script'),
+                    rollback_script=vuln_data.get('rollback_script'),
+                    business_impact=vuln_data.get('business_impact')
                 )
-                response.raise_for_status()
 
-                result = response.json()
-                return result.get("response", "")
+                analyses.append(analysis)
 
-        except asyncio.TimeoutError:
-            raise AnalyzerException(
-                "Timeout de l'API Ollama",
-                CoreErrorCodes.ANALYSIS_TIMEOUT
-            )
+            return analyses
+
+        except json.JSONDecodeError as e:
+            logger.error(f"Erreur parsing JSON IA: {e}")
+            logger.debug(f"Réponse brute: {response[:500]}")
+
+            # Fallback: créer des analyses basiques
+            return self._create_fallback_analyses(original_vulns)
+
         except Exception as e:
-            logger.error(f"Erreur API Ollama: {e}")
-            raise AnalyzerException(
-                f"Erreur API Ollama: {str(e)}",
-                CoreErrorCodes.AI_SERVICE_ERROR
+            logger.error(f"Erreur parsing réponse IA: {e}")
+            return self._create_fallback_analyses(original_vulns)
+
+    def _create_fallback_analyses(
+            self,
+            vulnerabilities: List[Dict]
+    ) -> List[VulnerabilityAnalysis]:
+        """Crée des analyses basiques si l'IA échoue"""
+        analyses = []
+
+        for vuln in vulnerabilities:
+            analysis = VulnerabilityAnalysis(
+                vulnerability_id=vuln.get('cve_id', 'UNKNOWN'),
+                name=vuln.get('name', 'Unknown Vulnerability'),
+                severity=vuln.get('severity', 'UNKNOWN'),
+                cvss_score=float(vuln.get('cvss_score') or 0.0),
+                impact_analysis="Analyse IA indisponible. Consulter NIST.",
+                exploitability="UNKNOWN",
+                priority_score=self._calculate_basic_priority(vuln),
+                affected_service=vuln.get('service', 'Unknown'),
+                recommended_actions=["Consulter la documentation NIST", "Appliquer les patches disponibles"],
+
+                # Données NIST
+                nist_verified=vuln.get('is_nist_enriched', False),
+                nist_url=f"https://nvd.nist.gov/vuln/detail/{vuln.get('cve_id', '')}" if vuln.get('cve_id') else None,
+                solution_links=vuln.get('solution_links', []),
+                references=vuln.get('references', [])
             )
 
-    def _calculate_confidence_score(self, vulnerabilities: List[VulnerabilityAnalysis]) -> float:
-        """Calcule un score de confiance pour l'analyse"""
+            analyses.append(analysis)
+
+        return analyses
+
+    def _calculate_basic_priority(self, vuln: Dict) -> int:
+        """Calcule une priorité basique basée sur CVSS"""
+        cvss = float(vuln.get('cvss_score') or 0.0)
+
+        if cvss >= 9.0:
+            return 10
+        elif cvss >= 7.0:
+            return 8
+        elif cvss >= 4.0:
+            return 5
+        else:
+            return 3
+
+    # ========================================================================
+    # GÉNÉRATION DU PLAN DE REMÉDIATION
+    # ========================================================================
+
+    async def _generate_remediation_plan(
+            self,
+            vulnerabilities: List[VulnerabilityAnalysis],
+            business_context: Optional[Dict]
+    ) -> Dict[str, Any]:
+        """Génère un plan de remédiation détaillé"""
+
+        # Trier par priorité
+        sorted_vulns = sorted(
+            vulnerabilities,
+            key=lambda v: (v.priority_score, v.cvss_score),
+            reverse=True
+        )
+
+        # Actions immédiates (priorité >= 8)
+        immediate = [
+            {
+                "vulnerability_id": v.vulnerability_id,
+                "action": v.recommended_actions[0] if v.recommended_actions else "Analyser",
+                "priority": v.priority_score,
+                "estimated_time": self._estimate_time(v)
+            }
+            for v in sorted_vulns if v.priority_score >= 8
+        ]
+
+        # Actions court terme (5 <= priorité < 8)
+        short_term = [
+            {
+                "vulnerability_id": v.vulnerability_id,
+                "action": v.recommended_actions[0] if v.recommended_actions else "Planifier",
+                "priority": v.priority_score
+            }
+            for v in sorted_vulns if 5 <= v.priority_score < 8
+        ]
+
+        # Actions long terme (priorité < 5)
+        long_term = [
+            {
+                "vulnerability_id": v.vulnerability_id,
+                "action": "Surveiller et planifier",
+                "priority": v.priority_score
+            }
+            for v in sorted_vulns if v.priority_score < 5
+        ]
+
+        # Estimation de durée totale
+        total_time = sum(self._estimate_time(v) for v in sorted_vulns)
+
+        return {
+            "immediate_actions": immediate,
+            "short_term_actions": short_term,
+            "long_term_actions": long_term,
+            "estimated_total_time_hours": total_time,
+            "critical_count": len([v for v in vulnerabilities if v.severity == "CRITICAL"]),
+            "high_count": len([v for v in vulnerabilities if v.severity == "HIGH"]),
+            "priority_order": [v.vulnerability_id for v in sorted_vulns]
+        }
+
+    def _estimate_time(self, vuln: VulnerabilityAnalysis) -> float:
+        """Estime le temps de remédiation (en heures)"""
+        base_time = {
+            "CRITICAL": 4.0,
+            "HIGH": 2.0,
+            "MEDIUM": 1.0,
+            "LOW": 0.5
+        }
+
+        return base_time.get(vuln.severity, 1.0)
+
+    # ========================================================================
+    # MÉTRIQUES ET STATISTIQUES
+    # ========================================================================
+
+    def _generate_analysis_summary(
+            self,
+            vulnerabilities: List[VulnerabilityAnalysis]
+    ) -> Dict[str, Any]:
+        """Génère un résumé de l'analyse"""
+
+        severity_counts = {
+            "CRITICAL": 0,
+            "HIGH": 0,
+            "MEDIUM": 0,
+            "LOW": 0,
+            "UNKNOWN": 0
+        }
+
+        for vuln in vulnerabilities:
+            severity_counts[vuln.severity] = severity_counts.get(vuln.severity, 0) + 1
+
+        # Score de risque global (moyenne pondérée)
+        weights = {"CRITICAL": 10, "HIGH": 7, "MEDIUM": 4, "LOW": 2, "UNKNOWN": 0}
+        total_weight = sum(weights.get(v.severity, 0) for v in vulnerabilities)
+        max_weight = len(vulnerabilities) * 10
+        overall_risk = (total_weight / max_weight * 10) if max_weight > 0 else 0
+
+        return {
+            "total_vulnerabilities": len(vulnerabilities),
+            "critical_count": severity_counts["CRITICAL"],
+            "high_count": severity_counts["HIGH"],
+            "medium_count": severity_counts["MEDIUM"],
+            "low_count": severity_counts["LOW"],
+            "unknown_count": severity_counts["UNKNOWN"],
+            "overall_risk_score": round(overall_risk, 2),
+            "average_cvss": round(
+                sum(v.cvss_score for v in vulnerabilities) / len(vulnerabilities), 2
+            ) if vulnerabilities else 0.0,
+            "highest_priority": max((v.priority_score for v in vulnerabilities), default=0),
+            "nist_verified_count": sum(1 for v in vulnerabilities if v.nist_verified)
+        }
+
+    def _calculate_confidence_score(
+            self,
+            vulnerabilities: List[VulnerabilityAnalysis]
+    ) -> float:
+        """Calcule le score de confiance global"""
         if not vulnerabilities:
             return 0.0
 
         factors = []
 
-        cve_ratio = len([v for v in vulnerabilities if v.vulnerability_id.startswith("CVE")]) / len(vulnerabilities)
-        factors.append(cve_ratio * 0.3)
+        # Facteur 1: Pourcentage vérifié par NIST
+        nist_verified_pct = sum(1 for v in vulnerabilities if v.nist_verified) / len(vulnerabilities)
+        factors.append(nist_verified_pct * 0.4)
 
-        priority_scores = [v.priority_score for v in vulnerabilities]
-        priority_variance = 1.0 - (max(priority_scores) - min(priority_scores)) / 10.0 if priority_scores else 0.0
-        factors.append(max(0.0, priority_variance) * 0.2)
+        # Facteur 2: Présence de CVE IDs
+        has_cve_pct = sum(
+            1 for v in vulnerabilities
+            if v.vulnerability_id.startswith('CVE-')
+        ) / len(vulnerabilities)
+        factors.append(has_cve_pct * 0.3)
 
-        reco_ratio = len([v for v in vulnerabilities if v.recommended_actions]) / len(vulnerabilities)
-        factors.append(reco_ratio * 0.3)
+        # Facteur 3: Scores CVSS disponibles
+        has_cvss_pct = sum(1 for v in vulnerabilities if v.cvss_score > 0) / len(vulnerabilities)
+        factors.append(has_cvss_pct * 0.2)
 
-        factors.append(0.2)
+        # Facteur 4: Actions recommandées disponibles
+        has_actions_pct = sum(
+            1 for v in vulnerabilities if v.recommended_actions
+        ) / len(vulnerabilities)
+        factors.append(has_actions_pct * 0.1)
 
         return min(1.0, sum(factors))
 
-    def _get_model_name(self) -> str:
-        """Retourne le nom du modèle IA utilisé"""
-        if self.current_provider == "openai":
-            return self.llm_config.get("model", "gpt-4")
-        elif self.current_provider == "ollama":
-            return f"ollama:{self.llm_config.get('model', 'llama3')}"
-        else:
-            return "unknown"
+    # ========================================================================
+    # MÉTHODES UTILITAIRES
+    # ========================================================================
 
-    async def _save_analysis_result(self, result: AnalysisResult):
-        """Sauvegarde le résultat d'analyse dans la base de données"""
-        try:
-            logger.debug(f"Sauvegarde analyse: {result.analysis_id}")
-        except Exception as e:
-            logger.warning(f"Erreur sauvegarde analyse: {e}")
+    def _get_model_name(self) -> str:
+        """Retourne le nom du modèle OpenAI utilisé"""
+        return self.model
 
     def _update_stats(self, success: bool, processing_time: float):
         """Met à jour les statistiques de l'analyseur"""
@@ -759,9 +967,12 @@ Description: {vuln.get('description', 'Pas de description')}
         else:
             self.stats["failed_analyses"] += 1
 
+        # Moyenne mobile du temps de traitement
         current_avg = self.stats["average_processing_time"]
         total = self.stats["total_analyses"]
-        self.stats["average_processing_time"] = (current_avg * (total - 1) + processing_time) / total
+        self.stats["average_processing_time"] = (
+                                                        current_avg * (total - 1) + processing_time
+                                                ) / total
 
     def get_stats(self) -> Dict[str, Any]:
         """Retourne les statistiques de l'analyseur"""
@@ -769,24 +980,29 @@ Description: {vuln.get('description', 'Pas de description')}
 
     def is_healthy(self) -> bool:
         """Vérifie si l'analyseur est en bonne santé"""
-        if not self.is_ready:
-            return False
+        return self.is_ready
+
+    async def close(self):
+        """Ferme proprement l'analyseur"""
+        logger.info("Fermeture de l'analyzer...")
+
+        # Sauvegarder les stats
+        stats_file = Path("data/cache/analyzer_stats.json")
+        stats_file.parent.mkdir(parents=True, exist_ok=True)
 
         try:
-            if self.current_provider == "openai":
-                return True
-            elif self.current_provider == "ollama":
-                base_url = self.client["base_url"]
-                response = requests.get(f"{base_url}/api/tags", timeout=5)
-                return response.status_code == 200
+            with open(stats_file, 'w') as f:
+                json.dump(self.stats, f, indent=2)
+            logger.info("Stats sauvegardées")
+        except Exception as e:
+            logger.warning(f"Erreur sauvegarde stats: {e}")
 
-            return True
-
-        except Exception:
-            return False
+        self.is_ready = False
 
 
-# === FONCTIONS UTILITAIRES ===
+# ============================================================================
+# FONCTIONS UTILITAIRES
+# ============================================================================
 
 async def quick_vulnerability_analysis(
         vulnerabilities: List[Dict[str, Any]],
@@ -805,8 +1021,12 @@ async def quick_vulnerability_analysis(
     analyzer = Analyzer()
 
     try:
-        result = await analyzer.analyze_vulnerabilities(vulnerabilities, target_system)
+        result = await analyzer.analyze_vulnerabilities(
+            vulnerabilities,
+            target_system
+        )
         return result.to_dict()
+
     except Exception as e:
         logger.error(f"Erreur analyse rapide: {e}")
         return {
@@ -816,17 +1036,83 @@ async def quick_vulnerability_analysis(
                 "overall_risk_score": 0.0
             }
         }
+    finally:
+        await analyzer.close()
 
 
-def create_analyzer(provider: str = "openai") -> Analyzer:
+def create_analyzer() -> Analyzer:
     """
-    Factory pour créer un analyseur avec un provider spécifique
-
-    Args:
-        provider: Fournisseur IA (openai, ollama, anthropic)
+    Factory pour créer un analyseur
 
     Returns:
-        Analyzer: Instance configurée
+        Analyzer: Instance configurée avec OpenAI
     """
-    config = get_llm_config(provider)
-    return Analyzer(config)
+    return Analyzer()
+
+
+# Alias pour compatibilité
+VulnerabilityAnalyzer = Analyzer
+
+# ============================================================================
+# POINT D'ENTRÉE POUR TESTS
+# ============================================================================
+
+if __name__ == "__main__":
+    import sys
+
+
+    async def test_analyzer():
+        """Test rapide de l'analyzer"""
+        print("🧪 Test de l'Analyzer avec NIST\n")
+
+        # Données de test
+        test_vulns = [
+            {
+                "cve_id": "CVE-2024-3094",
+                "service": "xz-utils",
+                "service_version": "5.6.0",
+                "port": 22,
+                "host": "192.168.1.100"
+            }
+        ]
+
+        # Créer l'analyzer
+        analyzer = Analyzer()
+
+        try:
+            print("📊 Analyse en cours...")
+            result = await analyzer.analyze_vulnerabilities(
+                test_vulns,
+                "Test System"
+            )
+
+            print("\n✅ Analyse terminée!")
+            print(f"   • Vulnérabilités: {result.analysis_summary['total_vulnerabilities']}")
+            print(f"   • NIST enrichies: {result.nist_enriched}")
+            print(f"   • Score de risque: {result.analysis_summary['overall_risk_score']}/10")
+            print(f"   • Temps: {result.processing_time:.2f}s")
+            print(f"   • Confiance: {result.confidence_score:.2%}")
+            print(f"   • Appels NIST: {result.nist_call_count}")
+            print(f"   • Cache hits: {result.nist_cache_hits}")
+
+            # Afficher la première vulnérabilité
+            if result.vulnerabilities:
+                vuln = result.vulnerabilities[0]
+                print(f"\n📋 Détails {vuln.vulnerability_id}:")
+                print(f"   • CVSS: {vuln.cvss_score}")
+                print(f"   • Gravité: {vuln.severity}")
+                print(f"   • NIST vérifié: {vuln.nist_verified}")
+                print(f"   • Priorité: {vuln.priority_score}/10")
+                print(f"   • Liens solutions: {len(vuln.solution_links)}")
+
+        except Exception as e:
+            print(f"\n❌ Erreur: {e}")
+            import traceback
+            traceback.print_exc()
+            sys.exit(1)
+        finally:
+            await analyzer.close()
+
+
+    # Lancer le test
+    asyncio.run(test_analyzer())

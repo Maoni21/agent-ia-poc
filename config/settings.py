@@ -32,13 +32,17 @@ class Config:
     # === CONFIGURATION API ===
     openai_api_key: str
     openai_model: str = "gpt-3.5-turbo"  # Changé de gpt-4 à gpt-3.5-turbo (plus rapide)
-    openai_max_tokens: int = 2000
+    openai_max_tokens: int = 1000  # ← MODIFIÉ : Réduit de 2000 à 1000
     openai_temperature: float = 0.3
 
     # === CONFIGURATION SCAN ===
     nmap_default_args: str = "-sV -sC --script vuln"
     scan_timeout: int = 300  # 5 minutes
     max_concurrent_scans: int = 3
+
+    # === LIMITES POUR ÉCONOMISER LES TOKENS ===
+    max_vulnerabilities_to_analyze: int = 10  # ← NOUVEAU : Analyser 10 vulns max
+    max_scripts_to_generate: int = 5  # ← NOUVEAU : Générer 5 scripts max
 
     # === CONFIGURATION BASE DE DONNÉES ===
     database_path: str = str(DATA_PATH / "database" / "vulnerability_agent.db")
@@ -83,8 +87,12 @@ SCAN_TIMEOUT = int(os.getenv("SCAN_TIMEOUT", "300"))
 # Configuration OpenAI - OPTIMISÉE pour éviter les timeouts
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-3.5-turbo")  # Changé de gpt-4
-MAX_TOKENS = int(os.getenv("MAX_TOKENS", "2000"))
+MAX_TOKENS = int(os.getenv("MAX_TOKENS", "1000"))  # ← MODIFIÉ : Réduit de 2000 à 1000
 TEMPERATURE = float(os.getenv("TEMPERATURE", "0.3"))
+
+# Limites pour économiser les tokens
+MAX_VULNERABILITIES_TO_ANALYZE = int(os.getenv("MAX_VULNERABILITIES_TO_ANALYZE", "10"))  # ← NOUVEAU
+MAX_SCRIPTS_TO_GENERATE = int(os.getenv("MAX_SCRIPTS_TO_GENERATE", "5"))  # ← NOUVEAU
 
 # Chemins des fichiers
 DATABASE_PATH = os.getenv("DATABASE_PATH", str(DATA_PATH / "database" / "vulnerability_agent.db"))
@@ -93,6 +101,41 @@ VULNERABILITY_DB_PATH = CONFIG_PATH / "vulnerability_db.json"
 # Configuration de logging
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 LOG_FILE = os.getenv("LOG_FILE", str(LOG_PATH / "app.log"))
+
+# === CONFIGURATION DES TYPES DE SCAN ===
+# ⭐ NOUVEAU : Configuration optimisée des scans Nmap
+SCAN_TYPES = {
+    'ultra-quick': {
+        'nmap_args': '-T5 -F --max-retries 0 --host-timeout 10s',
+        'description': 'Scan ultra-rapide pour tests et démos (30-60 secondes)',
+        'timeout': 120,
+        'ports': 'top-100'
+    },
+    'quick': {
+        'nmap_args': '-T5 -F --host-timeout 30s --max-retries 1',
+        'description': 'Scan rapide optimisé (2-3 minutes)',
+        'timeout': 300,
+        'ports': 'top-1000'
+    },
+    'full': {
+        'nmap_args': '-T4 -sV --version-intensity 3 --host-timeout 60s --max-retries 2',
+        'description': 'Scan complet avec détection de versions (5-10 minutes)',
+        'timeout': 600,
+        'ports': 'all'
+    },
+    'stealth': {
+        'nmap_args': '-T2 -sS -f --scan-delay 1s',
+        'description': 'Scan furtif lent pour éviter la détection',
+        'timeout': 1800,
+        'ports': 'top-1000'
+    },
+    'aggressive': {
+        'nmap_args': '-T4 -A -sV --script vuln',
+        'description': 'Scan agressif avec scripts de vulnérabilités',
+        'timeout': 900,
+        'ports': 'all'
+    }
+}
 
 # === CONFIGURATION DES OUTILS ===
 
@@ -185,11 +228,35 @@ def get_config() -> Config:
         scan_timeout=SCAN_TIMEOUT,
         database_path=DATABASE_PATH,
         log_level=LOG_LEVEL,
-        log_file=LOG_FILE
+        log_file=LOG_FILE,
+        max_vulnerabilities_to_analyze=MAX_VULNERABILITIES_TO_ANALYZE,  # ← NOUVEAU
+        max_scripts_to_generate=MAX_SCRIPTS_TO_GENERATE  # ← NOUVEAU
     )
 
 
-def validate_config(config: Config) -> bool:
+def get_scan_config(scan_type: str = 'quick') -> Dict[str, Any]:
+    """
+    Retourne la configuration pour un type de scan donné
+
+    Args:
+        scan_type: Type de scan (ultra-quick, quick, full, stealth, aggressive)
+
+    Returns:
+        Dict contenant la configuration du scan
+
+    Raises:
+        ValueError: Si le type de scan est invalide
+    """
+    if scan_type not in SCAN_TYPES:
+        raise ValueError(
+            f"Type de scan invalide: '{scan_type}'. "
+            f"Types disponibles: {', '.join(SCAN_TYPES.keys())}"
+        )
+
+    return SCAN_TYPES[scan_type].copy()
+
+
+def validate_config(config: Config) -> Dict[str, Any]:
     """
     Valide la configuration fournie
 
@@ -197,30 +264,53 @@ def validate_config(config: Config) -> bool:
         config: Instance de configuration à valider
 
     Returns:
-        bool: True si la configuration est valide
+        Dict: Dictionnaire avec le statut de validation et les détails
 
     Raises:
         ValueError: Si un paramètre obligatoire est manquant ou invalide
     """
+    issues = []
+    warnings = []
+
     # Vérifier la clé API
     if not config.openai_api_key or config.openai_api_key == "your_openai_api_key_here":
-        raise ValueError("Clé API OpenAI invalide ou manquante")
+        issues.append("Clé API OpenAI invalide ou manquante")
 
     # Vérifier les chemins
-    if not os.path.exists(Path(config.database_path).parent):
-        os.makedirs(Path(config.database_path).parent, exist_ok=True)
+    try:
+        if not os.path.exists(Path(config.database_path).parent):
+            os.makedirs(Path(config.database_path).parent, exist_ok=True)
+    except Exception as e:
+        warnings.append(f"Impossible de créer le répertoire de base de données: {e}")
 
-    if not os.path.exists(Path(config.log_file).parent):
-        os.makedirs(Path(config.log_file).parent, exist_ok=True)
+    try:
+        if not os.path.exists(Path(config.log_file).parent):
+            os.makedirs(Path(config.log_file).parent, exist_ok=True)
+    except Exception as e:
+        warnings.append(f"Impossible de créer le répertoire de logs: {e}")
 
     # Vérifier les paramètres numériques
     if config.scan_timeout <= 0:
-        raise ValueError("Timeout de scan doit être positif")
+        issues.append("Timeout de scan doit être positif")
 
     if config.openai_max_tokens <= 0 or config.openai_max_tokens > 4000:
-        raise ValueError("Max tokens doit être entre 1 et 4000")
+        issues.append("Max tokens doit être entre 1 et 4000")
 
-    return True
+    # Retourner le résultat de validation
+    if issues:
+        return {
+            "valid": False,
+            "status": "invalid",
+            "issues": issues,
+            "warnings": warnings
+        }
+
+    return {
+        "valid": True,
+        "status": "valid",
+        "issues": [],
+        "warnings": warnings
+    }
 
 
 def get_nmap_config(profile: str = "default") -> Dict[str, Any]:
@@ -285,6 +375,7 @@ def _validate_environment():
     os.makedirs(DATA_PATH / "reports", exist_ok=True)
     os.makedirs(DATA_PATH / "scripts", exist_ok=True)
     os.makedirs(DATA_PATH / "database", exist_ok=True)
+    os.makedirs(DATA_PATH / "workflow_results", exist_ok=True)
     os.makedirs(LOG_PATH, exist_ok=True)
 
     # Avertir si la clé API n'est pas configurée
@@ -297,6 +388,12 @@ def _validate_environment():
         print(f"   - Modèle: {OPENAI_MODEL}")
         print(f"   - Timeout: {LLM_CONFIG['openai']['timeout']}s")
         print(f"   - Max tokens: {MAX_TOKENS}")
+        print(f"\n💰 Limites pour économiser les tokens:")
+        print(f"   - Vulnérabilités analysées max: {MAX_VULNERABILITIES_TO_ANALYZE}")
+        print(f"   - Scripts générés max: {MAX_SCRIPTS_TO_GENERATE}")
+        print(f"\n⚡ Types de scans disponibles:")
+        for scan_type, config in SCAN_TYPES.items():
+            print(f"   - {scan_type}: {config['description']}")
 
 
 # Exécuter la validation au chargement

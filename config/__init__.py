@@ -10,6 +10,8 @@ from .settings import (
     SCAN_TIMEOUT,
     OPENAI_MODEL,
     MAX_TOKENS,
+    MAX_VULNERABILITIES_TO_ANALYZE,  # ← NOUVEAU
+    MAX_SCRIPTS_TO_GENERATE,         # ← NOUVEAU
     LOG_LEVEL,
     LOG_FILE,
     DATABASE_PATH,
@@ -36,6 +38,8 @@ __all__ = [
     "SCAN_TIMEOUT",
     "OPENAI_MODEL",
     "MAX_TOKENS",
+    "MAX_VULNERABILITIES_TO_ANALYZE",  # ← NOUVEAU
+    "MAX_SCRIPTS_TO_GENERATE",         # ← NOUVEAU
     "LOG_LEVEL",
     "LOG_FILE",
     "DATABASE_PATH",

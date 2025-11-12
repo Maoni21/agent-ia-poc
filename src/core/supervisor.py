@@ -542,7 +542,7 @@ class Supervisor:
             self._call_progress_callbacks(workflow_def.workflow_id, "scan", progress)
 
         scan_type = workflow_def.parameters.get('scan_type', 'full')
-        timeout = workflow_def.parameters.get('timeout', 3600)  # ← Changez 300 en 3600
+        timeout = workflow_def.parameters.get('timeout', 600)  # ← Changez 300 en 3600
         custom_args = workflow_def.parameters.get('nmap_args')
 
         result = await self.collector.scan_target(
@@ -566,7 +566,30 @@ class Supervisor:
         # Récupérer les données de vulnérabilités
         if workflow_result.scan_result:
             # Utiliser les vulnérabilités du scan
-            vulnerabilities_data = [vuln.to_dict() for vuln in workflow_result.scan_result.vulnerabilities]
+            all_vulnerabilities = [vuln.to_dict() for vuln in workflow_result.scan_result.vulnerabilities]
+
+            # ============================================================
+            # FILTRER LES N VULNÉRABILITÉS LES PLUS CRITIQUES
+            # ============================================================
+            max_vulns = self.config.get('max_vulnerabilities_to_analyze', 10)
+
+            # Trier par gravité (CRITICAL > HIGH > MEDIUM > LOW) puis par CVSS
+            severity_order = {'CRITICAL': 0, 'HIGH': 1, 'MEDIUM': 2, 'LOW': 3, 'UNKNOWN': 4}
+            sorted_vulns = sorted(
+                all_vulnerabilities,
+                key=lambda v: (
+                    severity_order.get(v.get('severity', 'UNKNOWN'), 4),
+                    -(float(v.get('cvss_score')) if v.get('cvss_score') is not None else 0.0)
+                )
+            )
+
+            # Limiter au nombre max
+            vulnerabilities_data = sorted_vulns[:max_vulns]
+
+            logger.info(
+                f"📊 Filtrage : {len(all_vulnerabilities)} vulnérabilités détectées → {len(vulnerabilities_data)} à analyser (top {max_vulns})")
+            # ============================================================
+
         else:
             # Utiliser les données fournies dans les paramètres
             vulnerabilities_data = workflow_def.parameters.get('vulnerabilities_data', [])
@@ -579,10 +602,12 @@ class Supervisor:
 
         business_context = workflow_def.parameters.get('business_context')
 
-        result = await self.analyzer.analyze_vulnerabilities(
+        # Appeler l'analyzer avec batch
+        result = await self.analyzer.analyze_vulnerabilities_batch(
             vulnerabilities_data=vulnerabilities_data,
             target_system=workflow_def.target,
-            business_context=business_context
+            business_context=business_context,
+            batch_size=10  # 10 vulns = 1 batch parfait !
         )
 
         # Mettre à jour les statistiques du workflow
@@ -622,12 +647,29 @@ class Supervisor:
 
         target_system = workflow_def.parameters.get('target_system', 'ubuntu')
         risk_tolerance = workflow_def.parameters.get('risk_tolerance', 'low')
-        max_scripts = workflow_def.parameters.get('max_scripts', 10)
+
+        # ⬇️ LIMITER LE NOMBRE DE SCRIPTS ⬇️
+        max_scripts = self.config.get('max_scripts_to_generate', 5)
+
+        # Trier par priorité (CRITICAL > HIGH > MEDIUM > LOW)
+        severity_order = {'CRITICAL': 0, 'HIGH': 1, 'MEDIUM': 2, 'LOW': 3, 'UNKNOWN': 4}
+
+        sorted_vulnerabilities = sorted(
+            vulnerabilities,
+            key=lambda v: (
+                severity_order.get(getattr(v, 'severity', 'UNKNOWN'), 4),
+                -(getattr(v, 'cvss_score', 0.0) or 0.0)
+            )
+        )
+
+        # Limiter au nombre max de scripts
+        vulnerabilities_to_process = sorted_vulnerabilities[:max_scripts]
+        # ⬆️ FIN LIMITATION ⬆️
+
+        logger.info(
+            f"Génération de {len(vulnerabilities_to_process)} scripts (sur {len(vulnerabilities)} vulnérabilités)")
 
         script_results = []
-
-        # Limiter le nombre de vulnérabilités à traiter
-        vulnerabilities_to_process = vulnerabilities[:max_scripts]
 
         for i, vulnerability in enumerate(vulnerabilities_to_process):
             try:
@@ -646,6 +688,12 @@ class Supervisor:
                 )
 
                 script_results.append(script_result)
+
+                # ⬇️ PAUSE POUR ÉVITER RATE LIMIT ⬇️
+                if i < len(vulnerabilities_to_process) - 1:
+                    logger.debug(f"⏸️  Pause 2s avant script suivant...")
+                    await asyncio.sleep(2)
+                # ⬆️ FIN PAUSE ⬆️
 
                 # Mettre à jour la progression
                 progress = int((i + 1) / len(vulnerabilities_to_process) * 100)
@@ -762,8 +810,51 @@ class Supervisor:
             self.progress_callbacks[workflow_id] = lambda task, progress: progress_callback(progress)
 
         # Attendre la fin du workflow
+        
+        # Attendre la fin du workflow
         result = await self.wait_for_workflow(workflow_id)
-        return result.scan_result
+        
+        # Vérifier et retourner le scan_result
+        if result and hasattr(result, 'scan_result') and result.scan_result:
+            return result.scan_result
+        
+        # Fallback : charger depuis le fichier JSON
+        self.logger.warning(f"Chargement scan depuis fichier...")
+        try:
+            from pathlib import Path
+            import json
+            
+            results_dir = Path("data/workflow_results")
+            result_file = results_dir / f"{workflow_id}.json"
+            
+            if result_file.exists():
+                with open(result_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                
+                scan_data = data.get('scan_result', {})
+                if scan_data:
+                    from .collector import ScanResult, Vulnerability, Service
+                    
+                    vulnerabilities = [Vulnerability(**v) for v in scan_data.get('vulnerabilities', [])]
+                    services = [Service(**s) for s in scan_data.get('services', [])]
+                    
+                    return ScanResult(
+                        scan_id=scan_data.get('scan_id', ''),
+                        target=scan_data.get('target', target),
+                        scan_type=scan_data.get('scan_type', scan_type),
+                        start_time=scan_data.get('start_time', ''),
+                        end_time=scan_data.get('end_time', ''),
+                        duration=scan_data.get('duration', 0),
+                        open_ports=scan_data.get('open_ports', []),
+                        services=services,
+                        vulnerabilities=vulnerabilities,
+                        metadata=scan_data.get('metadata', {})
+                    )
+        except Exception as e:
+            self.logger.error(f"Erreur chargement: {e}")
+        
+        return None
+
 
     async def analyze_vulnerabilities(
             self,
