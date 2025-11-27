@@ -1,0 +1,45 @@
+{
+  "scan_id": "test_scan_001",
+  "target": "test.example.com",
+  "vulnerabilities": [
+    {
+      "vulnerability_id": "CVE-2024-3094",
+      "name": "XZ Utils Backdoor",
+      "severity": "CRITICAL",
+      "cvss_score": 10.0,
+      "description": "Backdoor in XZ Utils allowing remote code execution",
+      "affected_service": "sshd",
+      "port": 22,
+      "protocol": "tcp",
+      "discovery_method": "version_detection",
+      "confidence": "high",
+      "discovered_at": "2024-11-12T10:00:00Z"
+    },
+    {
+      "vulnerability_id": "CVE-2021-44228",
+      "name": "Log4Shell - Apache Log4j2 Remote Code Execution",
+      "severity": "CRITICAL",
+      "cvss_score": 10.0,
+      "description": "Apache Log4j2 JNDI features do not protect against attacker controlled LDAP and other JNDI related endpoints",
+      "affected_service": "Apache Tomcat",
+      "port": 8080,
+      "protocol": "tcp",
+      "discovery_method": "script_detection",
+      "confidence": "high",
+      "discovered_at": "2024-11-12T10:00:00Z"
+    },
+    {
+      "vulnerability_id": "CVE-2023-23397",
+      "name": "Microsoft Outlook Privilege Escalation",
+      "severity": "HIGH",
+      "cvss_score": 9.1,
+      "description": "Microsoft Outlook Elevation of Privilege Vulnerability",
+      "affected_service": "Microsoft Outlook",
+      "port": 443,
+      "protocol": "tcp",
+      "discovery_method": "version_detection",
+      "confidence": "medium",
+      "discovered_at": "2024-11-12T10:00:00Z"
+    }
+  ]
+}

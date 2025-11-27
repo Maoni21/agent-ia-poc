@@ -1,439 +1,472 @@
-#!/usr/bin/env python3
+# !/usr/bin/env python3
 """
-Point d'entrée principal pour l'Agent IA de Cybersécurité
+Agent IA de Cybersécurité - Interface CLI Principale
 
-Ce script fournit une interface en ligne de commande pour lancer
-l'agent de cybersécurité avec différents modes d'exécution :
-- Scan de vulnérabilités
-- Analyse IA
-- Génération de scripts
-- Interface API REST
-- Workflows complets
+Ce module fournit l'interface en ligne de commande pour l'agent IA de cybersécurité.
+Il permet de scanner des systèmes, analyser les vulnérabilités et générer des scripts de correction.
 
 Usage:
-    python main.py --help
-    python main.py --target 192.168.1.100 --scan
-    python main.py --api --port 8000
-    python main.py --target example.com --full-workflow
+    python main.py --scan <target> [options]
+    python main.py --analyze --analyze-file <file> [options]
+    python main.py --full-workflow <target> [options]
 """
 
-import asyncio
 import argparse
+import asyncio
+import json
 import logging
-import sys
 import signal
-import os
+import sys
 from pathlib import Path
 from typing import Optional, Dict, Any
-import uvicorn
 
-# Ajouter le répertoire src au PYTHONPATH
-sys.path.insert(0, str(Path(__file__).parent / "src"))
-
+# Imports locaux
 from config import get_config, validate_config
-from config.settings import SCAN_TYPES  # ← AJOUTÉ : Import des types de scan
-
-# Imports conditionnels (commentés temporairement si manquants)
-try:
-    from src import (
-        print_application_banner,
-        print_quick_start,
-        get_application_status,
-        create_agent,
-        ApplicationStatus
-    )
-except ImportError:
-    # Fonctions de fallback si les imports échouent
-    def print_application_banner():
-        print("\n" + "=" * 60)
-        print("🛡️  AGENT IA DE CYBERSÉCURITÉ")
-        print("=" * 60 + "\n")
-
-
-    def print_quick_start():
-        print("📚 Quick Start disponible dans la documentation")
-
-
-    def get_application_status():
-        return {
-            "status": "running",
-            "missing_critical": [],
-            "version": "1.0.0",
-            "message": "Application en cours d'exécution",
-            "components_available": {},
-            "dependencies": {
-                "python_packages": {},
-                "external_tools": {}
-            }
-        }
-
-
-    def create_agent(config=None):
-        from src.core.supervisor import Supervisor
-        if config is None:
-            config = get_config()
-        return Supervisor(config)
-
-
-    ApplicationStatus = None
-
-from src.core.supervisor import Supervisor, WorkflowType
-from src.api.main import create_app
+from config.settings import SCAN_TYPES
 from src.utils.logger import setup_logger
+from src.core.supervisor import Supervisor, WorkflowType
 
-# Configuration du logging principal
+# Configuration du logging
 logger = setup_logger(__name__)
 
-# Variables globales pour la gestion des signaux
+# Instance globale du superviseur (pour le signal handling)
 supervisor_instance: Optional[Supervisor] = None
-api_server_process: Optional[Any] = None
-shutdown_event = asyncio.Event()
+
+
+# ============================================================================
+# FONCTIONS UTILITAIRES
+# ============================================================================
+
+def print_application_banner():
+    """Affiche la bannière de l'application"""
+    banner = """
+============================================================
+🛡️  AGENT IA DE CYBERSÉCURITÉ
+============================================================
+    """
+    print(banner)
+
+
+def configure_logging(args):
+    """
+    Configure le système de logging
+
+    Args:
+        args: Arguments parsés
+    """
+    log_level = logging.DEBUG if args.verbose else logging.INFO
+    if args.quiet:
+        log_level = logging.WARNING
+
+    logging.basicConfig(
+        level=log_level,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+
+    logger.info(f"Logging configuré: niveau {logging.getLevelName(log_level)}")
+
+
+def create_agent(config: Optional[Dict[str, Any]] = None) -> Supervisor:
+    """
+    Crée et initialise un agent (superviseur)
+
+    Args:
+        config: Configuration optionnelle
+
+    Returns:
+        Supervisor: Instance configurée
+    """
+    if config is None:
+        config = get_config()
+
+    # Valider la configuration
+    validation_result = validate_config(config)
+
+    # validate_config retourne un dict avec 'valid', 'issues', 'warnings'
+    if isinstance(validation_result, dict):
+        if not validation_result.get('valid', False):
+            issues = validation_result.get('issues', [])
+            logger.error(f"Erreurs de configuration: {issues}")
+            raise ValueError(f"Configuration invalide: {', '.join(issues)}")
+
+        # Afficher les warnings s'il y en a
+        warnings = validation_result.get('warnings', [])
+        if warnings:
+            for warning in warnings:
+                logger.warning(f"Configuration: {warning}")
+
+    return Supervisor(config)
 
 
 def setup_signal_handlers():
-    """Configure les gestionnaires de signaux pour un arrêt propre"""
+    """Configure les gestionnaires de signaux pour l'arrêt propre"""
 
     def signal_handler(signum, frame):
         """Gestionnaire de signal pour arrêt propre"""
-        logger.info(f"Signal {signum} reçu, arrêt en cours...")
-        shutdown_event.set()
+        print("\n🛑 Interruption reçue, arrêt en cours...")
+        logger.info(f"Signal {signum} reçu, arrêt du superviseur...")
 
-        # Arrêter le superviseur si actif
+        global supervisor_instance
         if supervisor_instance:
-            asyncio.create_task(supervisor_instance.shutdown())
+            try:
+                # Utiliser asyncio.run uniquement si pas déjà dans une boucle
+                try:
+                    loop = asyncio.get_running_loop()
+                    loop.create_task(supervisor_instance.shutdown())
+                except RuntimeError:
+                    asyncio.run(supervisor_instance.shutdown())
+            except Exception as e:
+                logger.error(f"Erreur lors de l'arrêt: {e}")
 
-    # Configurer les signaux
-    signal.signal(signal.SIGINT, signal_handler)  # Ctrl+C
-    signal.signal(signal.SIGTERM, signal_handler)  # Kill
+        sys.exit(0)
 
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+
+
+# ============================================================================
+# PARSEUR D'ARGUMENTS
+# ============================================================================
 
 def create_argument_parser() -> argparse.ArgumentParser:
     """
-    Crée le parser d'arguments en ligne de commande
+    Crée et configure le parseur d'arguments CLI
 
     Returns:
-        argparse.ArgumentParser: Parser configuré
+        ArgumentParser: Parseur configuré
     """
     parser = argparse.ArgumentParser(
-        description="Agent IA de Cybersécurité - Détection et correction automatisée de vulnérabilités",
+        description="Agent IA de Cybersécurité - Scan et correction automatisée",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Exemples d'utilisation:
+  # Scan rapide d'une cible
+  python main.py --scan 192.168.1.1 --scan-type quick
 
-  # Scan simple
-  %(prog)s --target 192.168.1.100 --scan
+  # Analyse avec IA d'un fichier de vulnérabilités
+  python main.py --analyze --analyze-file vulnerabilities.json
 
-  # Scan ultra-rapide (30-60 secondes)
-  %(prog)s --target 127.0.0.1 --scan-type ultra-quick --scan
+  # Workflow complet (scan + analyse + génération)
+  python main.py --full-workflow 192.168.1.1
 
-  # Scan avec analyse IA
-  %(prog)s --target example.com --scan --analyze
-
-  # Workflow complet (scan + analyse + génération scripts)
-  %(prog)s --target 192.168.1.1 --full-workflow
-
-  # Lancer l'API REST
-  %(prog)s --api --port 8000
-
-  # Scan avec paramètres personnalisés
-  %(prog)s --target 192.168.1.0/24 --scan-type aggressive --timeout 600
-
-  # Analyser un fichier de vulnérabilités existant
-  %(prog)s --analyze-file vulnerabilities.json
-
-  # Interface interactive
-  %(prog)s --interactive
-
-Pour plus d'informations: https://github.com/votre-repo/agent-ia-poc
+  # Mode API REST
+  python main.py --api --port 8000
         """
     )
 
-    # === ARGUMENTS PRINCIPAUX ===
+    # === COMMANDES PRINCIPALES ===
+    commands = parser.add_mutually_exclusive_group()
 
-    # Mode d'exécution
-    mode_group = parser.add_mutually_exclusive_group()
-    mode_group.add_argument(
+    commands.add_argument(
         '--scan',
         action='store_true',
-        help="Lancer un scan de vulnérabilités"
+        help='Scanner une cible pour détecter des vulnérabilités'
     )
-    mode_group.add_argument(
+
+    commands.add_argument(
         '--analyze',
         action='store_true',
-        help="Analyser des vulnérabilités avec l'IA"
+        help='Analyser des vulnérabilités avec l\'IA'
     )
-    mode_group.add_argument(
+
+    commands.add_argument(
         '--generate',
         action='store_true',
-        help="Générer des scripts de correction"
+        help='Générer des scripts de correction'
     )
-    mode_group.add_argument(
+
+    commands.add_argument(
         '--full-workflow',
         action='store_true',
-        help="Workflow complet (scan + analyse + génération)"
+        help='Workflow complet: scan + analyse + génération'
     )
-    mode_group.add_argument(
+
+    commands.add_argument(
         '--api',
         action='store_true',
-        help="Lancer l'interface API REST"
+        help='Lancer le serveur API REST'
     )
-    mode_group.add_argument(
+
+    commands.add_argument(
         '--interactive',
         action='store_true',
-        help="Mode interactif"
+        help='Mode interactif'
     )
 
-    # === PARAMÈTRES DE CIBLE ===
-
-    target_group = parser.add_argument_group('Paramètres de cible')
-    target_group.add_argument(
+    # === PARAMÈTRES GÉNÉRAUX ===
+    parser.add_argument(
         '--target',
         type=str,
-        help="Cible à scanner (IP, hostname, ou plage CIDR)"
-    )
-    target_group.add_argument(
-        '--target-file',
-        type=str,
-        help="Fichier contenant la liste des cibles"
+        help='Cible à scanner (IP ou nom de domaine)'
     )
 
-    # === PARAMÈTRES DE SCAN ===
-
-    scan_group = parser.add_argument_group('Paramètres de scan')
-    scan_group.add_argument(
+    parser.add_argument(
         '--scan-type',
-        choices=list(SCAN_TYPES.keys()),  # ← MODIFIÉ : Utilise SCAN_TYPES dynamiquement
-        default='quick',  # ← MODIFIÉ : Changed from 'full' to 'quick'
-        help="Type de scan à effectuer (défaut: quick)"
-    )
-    scan_group.add_argument(
-        '--nmap-args',
         type=str,
-        help="Arguments Nmap personnalisés"
-    )
-    scan_group.add_argument(
-        '--timeout',
-        type=int,
-        default=300,
-        help="Timeout du scan en secondes (défaut: 300)"
-    )
-    scan_group.add_argument(
-        '--ports',
-        type=str,
-        help="Ports à scanner (ex: 22,80,443 ou 1-1000)"
+        choices=['ultra-quick', 'quick', 'full', 'stealth', 'aggressive'],
+        default='full',
+        help='Type de scan à effectuer (défaut: full)'
     )
 
-    # === PARAMÈTRES D'ANALYSE ===
-
-    analyze_group = parser.add_argument_group('Paramètres d\'analyse IA')
-    analyze_group.add_argument(
+    parser.add_argument(
         '--analyze-file',
         type=str,
-        help="Fichier JSON de vulnérabilités à analyser"
+        help='Fichier JSON contenant les vulnérabilités à analyser'
     )
-    analyze_group.add_argument(
+
+    parser.add_argument(
+        '--output',
+        type=str,
+        help='Fichier de sortie pour les résultats'
+    )
+
+    parser.add_argument(
+        '--format',
+        type=str,
+        choices=['json', 'txt', 'html', 'markdown'],
+        default='json',
+        help='Format de sortie (défaut: json)'
+    )
+
+    # === CONFIGURATION IA ===
+    ai_group = parser.add_argument_group('Configuration IA')
+
+    ai_group.add_argument(
         '--ai-model',
-        choices=['gpt-4', 'gpt-3.5-turbo', 'ollama'],
+        type=str,
         default='gpt-4',
-        help="Modèle IA à utiliser (défaut: gpt-4)"
-    )
-    analyze_group.add_argument(
-        '--business-context',
-        type=str,
-        help="Contexte business pour l'analyse (ex: production, test)"
+        help='Modèle IA à utiliser (défaut: gpt-4)'
     )
 
-    # === PARAMÈTRES DE GÉNÉRATION ===
-
-    generate_group = parser.add_argument_group('Paramètres de génération de scripts')
-    generate_group.add_argument(
-        '--target-system',
-        choices=['ubuntu', 'debian', 'centos', 'rhel', 'windows'],
-        default='ubuntu',
-        help="Système d'exploitation cible (défaut: ubuntu)"
-    )
-    generate_group.add_argument(
-        '--risk-tolerance',
-        choices=['low', 'medium', 'high'],
-        default='low',
-        help="Tolérance au risque pour les scripts (défaut: low)"
-    )
-    generate_group.add_argument(
-        '--max-scripts',
-        type=int,
-        default=10,
-        help="Nombre maximum de scripts à générer (défaut: 10)"
+    ai_group.add_argument(
+        '--ai-temperature',
+        type=float,
+        default=0.3,
+        help='Température pour la génération IA (défaut: 0.3)'
     )
 
-    # === PARAMÈTRES API ===
+    # === OPTIONS API ===
+    api_group = parser.add_argument_group('Options API')
 
-    api_group = parser.add_argument_group('Paramètres API REST')
-    api_group.add_argument(
-        '--host',
-        type=str,
-        default='0.0.0.0',
-        help="Adresse d'écoute de l'API (défaut: 0.0.0.0)"
-    )
     api_group.add_argument(
         '--port',
         type=int,
         default=8000,
-        help="Port d'écoute de l'API (défaut: 8000)"
+        help='Port pour le serveur API (défaut: 8000)'
     )
+
     api_group.add_argument(
-        '--dev',
-        action='store_true',
-        help="Mode développement (reload automatique)"
-    )
-    api_group.add_argument(
-        '--reload',
-        action='store_true',
-        help="Activer le reload automatique"
-    )
-
-    # === PARAMÈTRES GÉNÉRAUX ===
-
-    general_group = parser.add_argument_group('Paramètres généraux')
-    general_group.add_argument(
-        '--config',
+        '--host',
         type=str,
-        help="Fichier de configuration personnalisé"
-    )
-    general_group.add_argument(
-        '--log-level',
-        choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'],
-        default='INFO',
-        help="Niveau de logging (défaut: INFO)"
-    )
-    general_group.add_argument(
-        '--output',
-        type=str,
-        help="Fichier de sortie pour les résultats"
-    )
-    general_group.add_argument(
-        '--format',
-        choices=['json', 'txt', 'html', 'csv'],
-        default='json',
-        help="Format de sortie (défaut: json)"
-    )
-    general_group.add_argument(
-        '--quiet',
-        action='store_true',
-        help="Mode silencieux (moins de logs)"
-    )
-    general_group.add_argument(
-        '--verbose', '-v',
-        action='store_true',
-        help="Mode verbeux (plus de logs)"
+        default='127.0.0.1',
+        help='Hôte pour le serveur API (défaut: 127.0.0.1)'
     )
 
-    # === ACTIONS UTILITAIRES ===
+    # === OPTIONS DE DÉBOGAGE ===
+    debug_group = parser.add_argument_group('Débogage')
 
-    utils_group = parser.add_argument_group('Actions utilitaires')
-    utils_group.add_argument(
+    debug_group.add_argument(
+        '-v', '--verbose',
+        action='store_true',
+        help='Mode verbeux (plus de logs)'
+    )
+
+    debug_group.add_argument(
+        '-q', '--quiet',
+        action='store_true',
+        help='Mode silencieux (moins de logs)'
+    )
+
+    debug_group.add_argument(
         '--version',
         action='store_true',
-        help="Afficher la version et quitter"
+        help='Afficher la version'
     )
-    utils_group.add_argument(
+
+    debug_group.add_argument(
         '--status',
         action='store_true',
-        help="Afficher le statut de l'application"
+        help='Afficher le statut de l\'agent'
     )
-    utils_group.add_argument(
+
+    debug_group.add_argument(
         '--check-deps',
         action='store_true',
-        help="Vérifier les dépendances"
+        help='Vérifier les dépendances'
     )
-    utils_group.add_argument(
+
+    debug_group.add_argument(
         '--test',
         action='store_true',
-        help="Lancer les tests de base"
+        help='Lancer les tests de base'
     )
 
     return parser
 
 
-def configure_logging(args) -> None:
+def validate_arguments(args):
     """
-    Configure le système de logging selon les arguments
-
-    Args:
-        args: Arguments parsés
-    """
-    # Déterminer le niveau de log
-    log_level = args.log_level
-
-    if args.quiet:
-        log_level = 'WARNING'
-    elif args.verbose:
-        log_level = 'DEBUG'
-
-    # Configurer le logging
-    logging.basicConfig(
-        level=getattr(logging, log_level),
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        handlers=[
-            logging.StreamHandler(sys.stdout),
-            logging.FileHandler('logs/app.log') if Path('logs').exists() else logging.NullHandler()
-        ]
-    )
-
-    logger.info(f"Logging configuré: niveau {log_level}")
-
-
-def validate_arguments(args) -> None:
-    """
-    Valide la cohérence des arguments
+    Valide les arguments fournis
 
     Args:
         args: Arguments parsés
 
     Raises:
-        SystemExit: Si les arguments sont invalides
+        ValueError: Si les arguments sont invalides
     """
     errors = []
 
-    # Vérifier qu'une action est spécifiée
-    actions = [args.scan, args.analyze, args.generate, args.full_workflow, args.api, args.interactive]
-    if not any(actions) and not any([args.version, args.status, args.check_deps, args.test]):
+    # Vérifier qu'une action a été spécifiée
+    if not any([
+        args.scan,
+        args.analyze,
+        args.generate,
+        args.full_workflow,
+        args.api,
+        args.interactive,
+        args.version,
+        args.status,
+        args.check_deps,
+        args.test
+    ]):
         errors.append("Aucune action spécifiée. Utilisez --help pour voir les options.")
 
-    # Vérifier les prérequis par action
+    # Valider les paramètres de scan
     if args.scan or args.full_workflow:
-        if not args.target and not args.target_file:
-            errors.append("--target ou --target-file requis pour le scan")
+        if not args.target:
+            errors.append("--target est requis pour --scan et --full-workflow")
 
+    # Valider les paramètres d'analyse
     if args.analyze and not args.analyze_file and not args.target:
-        errors.append("--analyze-file ou --target requis pour l'analyse")
+        errors.append("--analyze nécessite soit --analyze-file soit --target")
 
-    # Vérifier les fichiers d'entrée
-    if args.target_file and not Path(args.target_file).exists():
-        errors.append(f"Fichier de cibles non trouvé: {args.target_file}")
+    # Valider le fichier d'analyse
+    if args.analyze_file:
+        if not Path(args.analyze_file).exists():
+            errors.append(f"Fichier d'analyse non trouvé: {args.analyze_file}")
 
-    if args.analyze_file and not Path(args.analyze_file).exists():
-        errors.append(f"Fichier d'analyse non trouvé: {args.analyze_file}")
-
-    if args.config and not Path(args.config).exists():
-        errors.append(f"Fichier de configuration non trouvé: {args.config}")
-
-    # Vérifier les paramètres numériques
-    if args.timeout <= 0:
-        errors.append("Le timeout doit être positif")
-
-    if args.port < 1 or args.port > 65535:
-        errors.append("Le port doit être entre 1 et 65535")
-
-    if args.max_scripts < 1:
-        errors.append("Le nombre maximum de scripts doit être positif")
-
-    # Afficher les erreurs et quitter si nécessaire
     if errors:
-        print("❌ Erreurs de validation des arguments:", file=sys.stderr)
+        print("❌ Erreurs de validation des arguments:")
         for error in errors:
-            print(f"   {error}", file=sys.stderr)
+            print(f"   {error}")
         sys.exit(1)
 
+
+# ============================================================================
+# FONCTIONS UTILITAIRES
+# ============================================================================
+
+def display_application_status():
+    """Affiche le statut de l'application"""
+    print("\n📊 STATUT DE L'AGENT IA\n")
+
+    # Configuration
+    try:
+        config = get_config()
+        print("✅ Configuration: OK")
+        print(f"   - Modèle IA: {config.get('openai_model', 'N/A')}")
+    except Exception as e:
+        print(f"❌ Configuration: {e}")
+
+    # Dépendances
+    print("\n📦 Dépendances:")
+    try:
+        import nmap
+        print("   ✅ python-nmap")
+    except ImportError:
+        print("   ❌ python-nmap (requis)")
+
+    try:
+        import openai
+        print("   ✅ openai")
+    except ImportError:
+        print("   ❌ openai (requis)")
+
+    print()
+
+
+def check_dependencies() -> bool:
+    """
+    Vérifie que toutes les dépendances sont installées
+
+    Returns:
+        bool: True si toutes les dépendances sont présentes
+    """
+    print("🔍 Vérification des dépendances...\n")
+
+    all_ok = True
+
+    # Dépendances Python
+    required_modules = [
+        ('nmap', 'python-nmap'),
+        ('openai', 'openai'),
+        ('fastapi', 'fastapi'),
+        ('uvicorn', 'uvicorn'),
+        ('pydantic', 'pydantic')
+    ]
+
+    for module_name, package_name in required_modules:
+        try:
+            __import__(module_name)
+            print(f"✅ {package_name}")
+        except ImportError:
+            print(f"❌ {package_name} (pip install {package_name})")
+            all_ok = False
+
+    # Outils système
+    print("\n🔧 Outils système:")
+    import shutil
+
+    if shutil.which('nmap'):
+        print("✅ nmap")
+    else:
+        print("❌ nmap (apt install nmap / brew install nmap)")
+        all_ok = False
+
+    print()
+    return all_ok
+
+
+async def run_basic_tests() -> int:
+    """
+    Lance des tests de base
+
+    Returns:
+        int: Code de retour
+    """
+    print("🧪 Tests de base...\n")
+
+    try:
+        # Test 1: Configuration
+        print("Test 1: Configuration...", end=" ")
+        config = get_config()
+        assert config is not None
+        print("✅")
+
+        # Test 2: Création superviseur
+        print("Test 2: Création superviseur...", end=" ")
+        supervisor = create_agent(config)
+        assert supervisor is not None
+        print("✅")
+
+        # Test 3: Fermeture
+        print("Test 3: Fermeture propre...", end=" ")
+        await supervisor.shutdown()
+        print("✅")
+
+        print("\n✅ Tous les tests passent")
+        return 0
+
+    except Exception as e:
+        print(f" ❌")
+        print(f"❌ Erreur lors des tests: {e}")
+        logger.error(f"Erreur tests de base: {e}")
+        return 1
+
+
+# ============================================================================
+# GESTIONNAIRES DE COMMANDES
+# ============================================================================
 
 async def handle_scan_command(args) -> int:
     """
@@ -443,73 +476,346 @@ async def handle_scan_command(args) -> int:
         args: Arguments parsés
 
     Returns:
-        int: Code de retour (0 = succès)
+        int: Code de retour
     """
     try:
-        logger.info(f"🔍 Début du scan: {args.target}")
+        logger.info(f"🔍 Début du scan de {args.target}")
+        print(f"🔍 Scan de: {args.target}")
+        print(f"   Type: {args.scan_type}\n")
 
         # Créer le superviseur
         global supervisor_instance
         config = get_config()
         supervisor_instance = create_agent(config)
 
-        # Préparer les paramètres de scan
-        scan_params = {
-            'scan_type': args.scan_type,
-            'timeout': args.timeout,
-        }
-
-        if args.nmap_args:
-            scan_params['nmap_args'] = args.nmap_args
-
-        if args.ports:
-            scan_params['ports'] = args.ports
-
         # Lancer le scan
-        def progress_callback(progress: int):
-            if not args.quiet:
-                print(f"\r🔄 Progression du scan: {progress}%", end="", flush=True)
-
-        result = await supervisor_instance.run_scan(
+        scan_result = await supervisor_instance.run_scan(
             target=args.target,
-            scan_type=args.scan_type,
-            progress_callback=progress_callback if not args.quiet else None
+            scan_type=args.scan_type
         )
 
-        if not args.quiet:
-            print()  # Nouvelle ligne après la progression
-
         # Vérifier que le résultat existe
-        if not result:
-            print(f"❌ Erreur: Le scan n'a pas retourné de résultats")
+        if not scan_result:
+            print("❌ Erreur: Aucun résultat de scan")
             return 1
 
         # Afficher les résultats
-        vulns_found = len(result.vulnerabilities) if result.vulnerabilities else 0
         print(f"\n✅ Scan terminé:")
-        print(f"   • Cible: {result.target}")
-        print(f"   • Durée: {result.duration:.1f}s")
-        print(f"   • Ports ouverts: {len(result.open_ports) if result.open_ports else 0}")
-        print(f"   • Services: {len(result.services) if result.services else 0}")
-        print(f"   • Vulnérabilités: {vulns_found}")
+        print(f"   • Ports ouverts: {len(scan_result.open_ports) if hasattr(scan_result, 'open_ports') else 0}")
+        print(f"   • Services détectés: {len(scan_result.services) if hasattr(scan_result, 'services') else 0}")
+        print(
+            f"   • Vulnérabilités trouvées: {len(scan_result.vulnerabilities) if hasattr(scan_result, 'vulnerabilities') else 0}")
+        print(f"   • Durée: {scan_result.duration:.1f}s" if hasattr(scan_result, 'duration') else "")
 
-        if vulns_found > 0:
-            print(f"\n🚨 Vulnérabilités détectées:")
-            for vuln in result.vulnerabilities[:5]:  # Limiter à 5 pour l'affichage
-                severity_icon = {"CRITICAL": "🔴", "HIGH": "🟠", "MEDIUM": "🟡", "LOW": "🟢"}.get(vuln.severity, "⚪")
-                print(f"   {severity_icon} {vuln.name} ({vuln.severity})")
+        # Afficher les vulnérabilités critiques
+        if hasattr(scan_result, 'vulnerabilities') and scan_result.vulnerabilities:
+            critical_vulns = [v for v in scan_result.vulnerabilities if
+                              hasattr(v, 'severity') and v.severity == 'CRITICAL']
+            if critical_vulns:
+                print(f"\n🔴 Vulnérabilités critiques ({len(critical_vulns)}):")
+                for vuln in critical_vulns[:5]:  # Limiter à 5
+                    cve_id = vuln.cve_ids[0] if hasattr(vuln, 'cve_ids') and vuln.cve_ids else 'N/A'
+                    vuln_name = vuln.name if hasattr(vuln, 'name') else 'Vulnérabilité inconnue'
+                    print(f"   - {vuln_name} (CVE: {cve_id})")
 
-            if vulns_found > 5:
-                print(f"   ... et {vulns_found - 5} autres vulnérabilités")
-
-        # Sauvegarder les résultats si demandé
+        # Sauvegarder si demandé
         if args.output:
-            await save_results(result.to_dict(), args.output, args.format)
+            result_dict = scan_result.to_dict() if hasattr(scan_result, 'to_dict') else scan_result
+            await save_results(result_dict, args.output, args.format)
 
         return 0
 
     except Exception as e:
         logger.error(f"Erreur lors du scan: {e}")
+        print(f"❌ Erreur: {e}", file=sys.stderr)
+        import traceback
+        traceback.print_exc()
+        return 1
+    finally:
+        if supervisor_instance:
+            await supervisor_instance.shutdown()
+
+
+async def handle_analyze_command(args) -> int:
+    """
+    Traite la commande d'analyse IA
+
+    Args:
+        args: Arguments parsés
+
+    Returns:
+        int: Code de retour
+    """
+    try:
+        logger.info("🧠 Début de l'analyse IA")
+
+        # Créer le superviseur
+        global supervisor_instance
+        config = get_config()
+        supervisor_instance = create_agent(config)
+
+        # Charger les données de vulnérabilités
+        if args.analyze_file:
+            print(f"📂 Chargement du fichier: {args.analyze_file}")
+
+            with open(args.analyze_file, 'r', encoding='utf-8') as f:
+                vulnerabilities_data = json.load(f)
+
+            # S'assurer que c'est une liste
+            if isinstance(vulnerabilities_data, dict):
+                if 'vulnerabilities' in vulnerabilities_data:
+                    vulnerabilities_data = vulnerabilities_data['vulnerabilities']
+                else:
+                    vulnerabilities_data = [vulnerabilities_data]
+
+        else:
+            print(f"🔍 Scan et analyse de: {args.target}")
+            scan_result = await supervisor_instance.run_scan(args.target, args.scan_type)
+            vulnerabilities_data = [vuln.to_dict() for vuln in scan_result.vulnerabilities]
+
+        if not vulnerabilities_data:
+            print("⚠️ Aucune vulnérabilité à analyser")
+            return 0
+
+        # ============================================================
+        # FILTRAGE À 10 VULNÉRABILITÉS MAX (ÉCONOMIE DE TOKENS)
+        # ============================================================
+
+        original_count = len(vulnerabilities_data)
+
+        if original_count > 10:
+            print(f"⚡ Filtrage: {original_count} vulnérabilités → Top 10 les plus critiques")
+
+            # Fonction de tri par priorité
+            def get_vulnerability_priority(vuln):
+                """Calcule la priorité d'une vulnérabilité"""
+                severity_map = {
+                    "CRITICAL": 4,
+                    "HIGH": 3,
+                    "MEDIUM": 2,
+                    "LOW": 1,
+                    "UNKNOWN": 0
+                }
+
+                severity = vuln.get('severity', 'UNKNOWN')
+                if isinstance(severity, str):
+                    severity = severity.upper()
+
+                cvss = vuln.get('cvss_score', 0)
+                if cvss is None:
+                    cvss = 0
+
+                # Priorité = (niveau de sévérité * 10) + score CVSS
+                severity_priority = severity_map.get(severity, 0)
+                return (severity_priority * 10 + float(cvss))
+
+            # Trier et limiter à 10
+            try:
+                vulnerabilities_data = sorted(
+                    vulnerabilities_data,
+                    key=get_vulnerability_priority,
+                    reverse=True
+                )[:10]
+
+                print(f"✅ Top 10 sélectionnées (économie: {original_count - 10} vulnérabilités)")
+
+                # Afficher le résumé des vulnérabilités sélectionnées
+                critical = sum(1 for v in vulnerabilities_data if v.get('severity', '').upper() == 'CRITICAL')
+                high = sum(1 for v in vulnerabilities_data if v.get('severity', '').upper() == 'HIGH')
+                medium = sum(1 for v in vulnerabilities_data if v.get('severity', '').upper() == 'MEDIUM')
+
+                print(f"   📊 Répartition: {critical} critiques, {high} élevées, {medium} moyennes")
+
+            except Exception as e:
+                logger.warning(f"Erreur lors du filtrage: {e}, analyse de toutes les vulnérabilités")
+                # En cas d'erreur, on garde toutes les vulnérabilités
+                pass
+
+        print(f"🧠 Analyse de {len(vulnerabilities_data)} vulnérabilités...")
+
+        # Lancer l'analyse
+        analysis_result = await supervisor_instance.analyze_vulnerabilities(
+            vulnerabilities_data=vulnerabilities_data,
+            target_system=args.target or "Système inconnu"
+        )
+
+        # ============================================================
+        # FIX BUG #4 : VÉRIFICATIONS ROBUSTES
+        # ============================================================
+
+        # Vérifier que le résultat existe
+        if not analysis_result:
+            print("❌ Erreur: L'analyse n'a pas retourné de résultats")
+            logger.error("analysis_result est None")
+            return 1
+
+        # Vérifier que les attributs existent
+        if not hasattr(analysis_result, 'vulnerabilities'):
+            print("❌ Erreur: Format de résultat invalide (pas d'attribut vulnerabilities)")
+            logger.error(f"analysis_result type: {type(analysis_result)}, attributs: {dir(analysis_result)}")
+            return 1
+
+        # Vérifier que vulnerabilities n'est pas None
+        if analysis_result.vulnerabilities is None:
+            print("❌ Erreur: Liste de vulnérabilités est None")
+            return 1
+
+        # ============================================================
+        # AFFICHAGE SÉCURISÉ
+        # ============================================================
+
+        print(f"\n✅ Analyse terminée:")
+        print(f"   • Vulnérabilités analysées: {len(analysis_result.vulnerabilities)}")
+
+        # Vérifier que analysis_summary existe
+        if hasattr(analysis_result, 'analysis_summary') and analysis_result.analysis_summary:
+            summary = analysis_result.analysis_summary
+            overall_risk = summary.get('overall_risk_score', 0)
+            print(f"   • Score de risque global: {overall_risk:.1f}/10")
+        else:
+            print("   • Score de risque global: N/A")
+
+        # Vérifier que ai_model_used existe
+        if hasattr(analysis_result, 'ai_model_used'):
+            print(f"   • Modèle IA utilisé: {analysis_result.ai_model_used}")
+
+        # Afficher le résumé par gravité
+        if hasattr(analysis_result, 'analysis_summary') and analysis_result.analysis_summary:
+            summary = analysis_result.analysis_summary
+            print(f"\n📊 Répartition par gravité:")
+            print(f"   🔴 Critiques: {summary.get('critical_count', 0)}")
+            print(f"   🟠 Élevées: {summary.get('high_count', 0)}")
+            print(f"   🟡 Moyennes: {summary.get('medium_count', 0)}")
+            print(f"   🟢 Faibles: {summary.get('low_count', 0)}")
+
+        # Afficher les actions prioritaires
+        if hasattr(analysis_result, 'analysis_summary') and analysis_result.analysis_summary:
+            summary = analysis_result.analysis_summary
+            if 'immediate_actions_required' in summary:
+                immediate = summary['immediate_actions_required']
+                if immediate > 0:
+                    print(f"\n⚠️ Actions immédiates requises: {immediate}")
+
+                    # Afficher les vulnérabilités prioritaires
+                    priority_vulns = sorted(
+                        analysis_result.vulnerabilities,
+                        key=lambda v: v.priority_score if hasattr(v, 'priority_score') else 0,
+                        reverse=True
+                    )[:3]
+
+                    for vuln in priority_vulns:
+                        if hasattr(vuln, 'priority_score') and vuln.priority_score >= 8:
+                            severity_icon = {
+                                "CRITICAL": "🔴",
+                                "HIGH": "🟠",
+                                "MEDIUM": "🟡",
+                                "LOW": "🟢"
+                            }.get(vuln.severity if hasattr(vuln, 'severity') else 'UNKNOWN', "⚪")
+                            name = vuln.name if hasattr(vuln, 'name') else 'Vulnérabilité inconnue'
+                            print(f"   {severity_icon} {name} (Priorité: {vuln.priority_score}/10)")
+
+        # Sauvegarder si demandé
+        if args.output:
+            await save_results(analysis_result.to_dict(), args.output, args.format)
+
+        return 0
+
+    except Exception as e:
+        logger.error(f"Erreur lors de l'analyse: {e}")
+        print(f"❌ Erreur: {e}", file=sys.stderr)
+        import traceback
+        traceback.print_exc()
+        return 1
+    finally:
+        if supervisor_instance:
+            await supervisor_instance.shutdown()
+
+
+async def handle_generate_command(args) -> int:
+    """
+    Traite la commande de génération de scripts
+
+    Args:
+        args: Arguments parsés
+
+    Returns:
+        int: Code de retour
+    """
+    try:
+        logger.info("🔧 Début de la génération de scripts")
+
+        # Créer le superviseur
+        global supervisor_instance
+        config = get_config()
+        supervisor_instance = create_agent(config)
+
+        # Déterminer les vulnérabilités à traiter
+        if args.analyze_file:
+            print(f"📂 Chargement des vulnérabilités: {args.analyze_file}")
+
+            with open(args.analyze_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+
+            # Extraire les vulnérabilités selon le format
+            if isinstance(data, list):
+                vulnerabilities = data
+            elif isinstance(data, dict):
+                if 'vulnerabilities' in data:
+                    vulnerabilities = data['vulnerabilities']
+                else:
+                    vulnerabilities = [data]
+            else:
+                raise ValueError("Format de données invalide")
+
+        else:
+            # Analyser d'abord
+            print(f"🔍 Scan et analyse de: {args.target}")
+            analysis_result = await supervisor_instance.run_complete_workflow(
+                target=args.target,
+                scan_type=args.scan_type
+            )
+            vulnerabilities = analysis_result.vulnerabilities
+
+        if not vulnerabilities:
+            print("⚠️ Aucune vulnérabilité à traiter")
+            return 0
+
+        print(f"🔧 Génération de scripts pour {len(vulnerabilities)} vulnérabilités...")
+
+        # Limiter à 5 scripts max pour économiser les tokens
+        vulnerabilities_to_process = vulnerabilities[:5]
+
+        scripts_generated = []
+        for i, vuln in enumerate(vulnerabilities_to_process, 1):
+            try:
+                # Extraire l'ID de la vulnérabilité
+                vuln_id = vuln.get('vulnerability_id') or vuln.get('cve_id', f'VULN-{i}')
+
+                print(f"   {i}/{len(vulnerabilities_to_process)} - {vuln_id}...", end=" ")
+
+                script_result = await supervisor_instance.generate_fix_script(
+                    vulnerability_id=vuln_id,
+                    target_system='ubuntu'
+                )
+
+                scripts_generated.append(script_result)
+                print("✅")
+
+            except Exception as e:
+                logger.error(f"Erreur génération script pour {vuln_id}: {e}")
+                print(f"❌ ({e})")
+
+        print(f"\n✅ Scripts générés: {len(scripts_generated)}/{len(vulnerabilities_to_process)}")
+
+        # Sauvegarder si demandé
+        if args.output:
+            scripts_data = [script.to_dict() for script in scripts_generated]
+            await save_results(scripts_data, args.output, args.format)
+
+        return 0
+
+    except Exception as e:
+        logger.error(f"Erreur lors de la génération: {e}")
         print(f"❌ Erreur: {e}", file=sys.stderr)
         return 1
     finally:
@@ -519,7 +825,7 @@ async def handle_scan_command(args) -> int:
 
 async def handle_full_workflow_command(args) -> int:
     """
-    Traite le workflow complet (scan + analyse + génération)
+    Traite la commande de workflow complet
 
     Args:
         args: Arguments parsés
@@ -528,330 +834,238 @@ async def handle_full_workflow_command(args) -> int:
         int: Code de retour
     """
     try:
-        logger.info(f"🚀 Début du workflow complet: {args.target}")
+        logger.info(f"🚀 Début du workflow complet pour {args.target}")
+
+        print(f"🚀 Workflow complet: {args.target}\n")
+        print("Étapes:")
+        print("   1. 🔍 Scan de vulnérabilités")
+        print("   2. 🧠 Analyse IA")
+        print("   3. 🔧 Génération de scripts\n")
 
         # Créer le superviseur
         global supervisor_instance
         config = get_config()
         supervisor_instance = create_agent(config)
 
-        # Callback de progression
-        def progress_callback(task: str, progress: int):
-            if not args.quiet:
-                task_icons = {
-                    "scan": "🔍",
-                    "analyze": "🧠",
-                    "generate_scripts": "🔧"
-                }
-                icon = task_icons.get(task, "⚙️")
-                print(f"\r{icon} {task.title()}: {progress}%", end="", flush=True)
+        # Charger les vulnérabilités si fichier fourni
+        if args.analyze_file:
+            print(f"📂 Chargement des vulnérabilités: {args.analyze_file}")
+            with open(args.analyze_file, 'r', encoding='utf-8') as f:
+                loaded_data = json.load(f)
 
-        # Lancer le workflow complet
-        result = await supervisor_instance.run_complete_workflow(
-            target=args.target,
-            scan_type=args.scan_type,
-            progress_callback=progress_callback if not args.quiet else None
-        )
+            # S'assurer que c'est une liste
+            if isinstance(loaded_data, dict):
+                if 'vulnerabilities' in loaded_data:
+                    vulnerabilities_data = loaded_data['vulnerabilities']
+                else:
+                    vulnerabilities_data = [loaded_data]
+            else:
+                vulnerabilities_data = loaded_data
 
-        if not args.quiet:
-            print()  # Nouvelle ligne après la progression
+            print(f"✅ {len(vulnerabilities_data)} vulnérabilités chargées\n")
 
-        # Vérifier que le résultat existe
-        if not result:
-            print(f"❌ Erreur: Le workflow n'a pas retourné de résultats")
-            return 1
+            # Lancer l'analyse directement
+            print("🧠 Étape 2/3: Analyse IA...")
+            analysis_result = await supervisor_instance.analyze_vulnerabilities(
+                vulnerabilities_data=vulnerabilities_data,
+                target_system=args.target or "Système inconnu"
+            )
 
-        # Afficher le résumé
-        print(f"\n✅ Workflow terminé:")
-        print(f"   • Cible: {result.target}")
-        print(f"   • Durée totale: {result.duration:.1f}s" if result.duration else "")
-        print(f"   • Vulnérabilités trouvées: {result.total_vulnerabilities}")
-        print(f"   • Vulnérabilités critiques: {result.critical_vulnerabilities}")
-        print(f"   • Scripts générés: {result.scripts_generated}")
+            # Afficher les résultats d'analyse
+            if analysis_result and hasattr(analysis_result, 'vulnerabilities'):
+                print(f"✅ Analyse terminée: {len(analysis_result.vulnerabilities)} vulnérabilités analysées")
 
-        # Détails sur les résultats
-        if result.scan_result:
-            print(f"\n📊 Résultats du scan:")
-            print(f"   • Ports ouverts: {len(result.scan_result.open_ports)}")
-            print(f"   • Services détectés: {len(result.scan_result.services)}")
+                # Limiter aux 5 plus critiques pour la génération de scripts
+                vulnerabilities_for_scripts = sorted(
+                    analysis_result.vulnerabilities,
+                    key=lambda v: v.priority_score if hasattr(v, 'priority_score') else 0,
+                    reverse=True
+                )[:5]
 
-        if result.analysis_result:
-            print(f"\n🧠 Résultats de l'analyse IA:")
-            print(f"   • Modèle utilisé: {result.analysis_result.ai_model_used}")
-            print(f"   • Confiance: {result.analysis_result.confidence_score:.1%}")
+                # Générer les scripts
+                print(f"\n🔧 Étape 3/3: Génération de scripts (limité à 5)...")
+                scripts_generated = []
 
-        if result.script_results:
-            print(f"\n🔧 Scripts générés:")
-            for script in result.script_results[:3]:  # Limiter l'affichage
-                risk_icon = {"LOW": "🟢", "MEDIUM": "🟡", "HIGH": "🟠", "CRITICAL": "🔴"}.get(script.metadata.risk_level, "⚪")
-                print(f"   {risk_icon} {script.script_id} (Risque: {script.metadata.risk_level})")
+                for i, vuln in enumerate(vulnerabilities_for_scripts, 1):
+                    try:
+                        vuln_id = vuln.vulnerability_id if hasattr(vuln, 'vulnerability_id') else f'VULN-{i}'
+                        print(f"   {i}/5 - {vuln_id}...", end=" ")
 
-            if len(result.script_results) > 3:
-                print(f"   ... et {len(result.script_results) - 3} autres scripts")
+                        # Convertir en dict pour passer au générateur
+                        vuln_dict = vuln.to_dict() if hasattr(vuln, 'to_dict') else vuln
 
-        # Sauvegarder les résultats
-        if args.output:
-            await save_results(result.to_dict(), args.output, args.format)
+                        script_result = await supervisor_instance.generate_fix_script(
+                            vulnerability_id=vuln_id,
+                            target_system='ubuntu'
+                        )
+
+                        scripts_generated.append(script_result)
+                        print("✅")
+
+                    except Exception as e:
+                        logger.error(f"Erreur génération script: {e}")
+                        print(f"❌")
+
+                print(f"\n✅ Scripts générés: {len(scripts_generated)}/5")
+
+        else:
+            # Workflow complet avec scan
+            print("🔍 Étape 1/3: Scan...")
+            result = await supervisor_instance.run_complete_workflow(
+                target=args.target,
+                scan_type=args.scan_type
+            )
+
+            # Afficher les résultats
+            print(f"\n✅ Workflow complet terminé:")
+            print(f"   • Vulnérabilités détectées: {result.total_vulnerabilities}")
+            print(f"   • Vulnérabilités critiques: {result.critical_vulnerabilities}")
+            print(f"   • Scripts générés: {result.scripts_generated}")
+            print(f"   • Durée totale: {result.duration:.1f}s")
+
+            # Sauvegarder si demandé
+            if args.output:
+                await save_results(result.to_dict(), args.output, args.format)
 
         return 0
 
     except Exception as e:
         logger.error(f"Erreur lors du workflow: {e}")
         print(f"❌ Erreur: {e}", file=sys.stderr)
+        import traceback
+        traceback.print_exc()
         return 1
     finally:
         if supervisor_instance:
             await supervisor_instance.shutdown()
 
 
-def handle_api_command(args) -> int:
-    """Lance l'interface API REST"""
-    try:
-        print(f"🚀 Lancement de l'API REST sur {args.host}:{args.port}")
-        print(f"📚 Documentation API: http://{args.host}:{args.port}/docs")
-        print(f"🔄 Alternative ReDoc: http://{args.host}:{args.port}/redoc")
-        print(f"🏥 Health Check: http://{args.host}:{args.port}/health")
-        print("🛑 Arrêt: Ctrl+C")
-
-        # Importer et créer l'app directement
-        from src.api.main import create_app
-        app = create_app()
-
-        # Lancer uvicorn simplement sans asyncio
-        uvicorn.run(
-            app,
-            host=args.host,
-            port=args.port,
-            log_level=args.log_level.lower() if hasattr(args, 'log_level') else "info",
-            reload=args.dev or args.reload if hasattr(args, 'dev') else False
-        )
-
-        return 0
-
-    except KeyboardInterrupt:
-        print("\n🛑 Arrêt de l'API demandé")
-        return 0
-    except Exception as e:
-        logger.error(f"Erreur API: {e}")
-        print(f"❌ Erreur API: {e}")
-        return 1
-
-
 def handle_interactive_mode() -> int:
     """
-    Mode interactif
+    Lance le mode interactif
+
+    Returns:
+        int: Code de retour
+    """
+    print("🎮 Mode interactif - Non implémenté")
+    print("Cette fonctionnalité sera disponible dans une future version.")
+    return 0
+
+
+def handle_api_command(args) -> int:
+    """
+    Lance le serveur API
+
+    Args:
+        args: Arguments parsés
 
     Returns:
         int: Code de retour
     """
     try:
-        print("🎮 Mode interactif - Agent IA de Cybersécurité")
-        print("Tapez 'help' pour voir les commandes disponibles, 'quit' pour quitter.")
+        print(f"🚀 Démarrage du serveur API")
+        print(f"   Host: {args.host}")
+        print(f"   Port: {args.port}\n")
 
-        while True:
-            try:
-                command = input("\n> ").strip()
+        import uvicorn
+        from src.api.routes import app
 
-                if command in ['quit', 'exit', 'q']:
-                    print("👋 Au revoir !")
-                    break
-
-                elif command == 'help':
-                    print("""
-Commandes disponibles:
-  scan <target>           - Scanner une cible
-  analyze <file>          - Analyser un fichier de vulnérabilités  
-  status                  - Afficher le statut de l'application
-  check                   - Vérifier les dépendances
-  api                     - Lancer l'API REST
-  help                    - Afficher cette aide
-  quit/exit/q             - Quitter
-                    """)
-
-                elif command == 'status':
-                    display_application_status()
-
-                elif command == 'check':
-                    check_dependencies()
-
-                elif command.startswith('scan '):
-                    target = command.split(' ', 1)[1]
-                    print(f"🔍 Scan de {target} (fonctionnalité à implémenter en mode async)")
-
-                elif command == 'api':
-                    print("🚀 Lancement de l'API sur http://localhost:8000")
-                    print("(Utilisez --api en ligne de commande pour un contrôle complet)")
-
-                else:
-                    print(f"❓ Commande inconnue: {command}")
-                    print("Tapez 'help' pour voir les commandes disponibles.")
-
-            except KeyboardInterrupt:
-                print("\n(Utilisez 'quit' pour quitter)")
-                continue
+        uvicorn.run(
+            app,
+            host=args.host,
+            port=args.port,
+            log_level="info" if args.verbose else "warning"
+        )
 
         return 0
 
     except Exception as e:
-        logger.error(f"Erreur mode interactif: {e}")
+        logger.error(f"Erreur lors du démarrage de l'API: {e}")
         print(f"❌ Erreur: {e}", file=sys.stderr)
         return 1
 
 
-async def save_results(results: dict, output_file: str, format: str) -> None:
+async def save_results(data: Dict[str, Any], output_file: str, format_type: str):
     """
     Sauvegarde les résultats dans un fichier
 
     Args:
-        results: Résultats à sauvegarder
-        output_file: Fichier de sortie
-        format: Format de sortie
+        data: Données à sauvegarder
+        output_file: Chemin du fichier de sortie
+        format_type: Format de sortie (json, txt, html, markdown)
     """
-    import json
-
     try:
         output_path = Path(output_file)
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
-        if format == 'json':
+        if format_type == 'json':
             with open(output_path, 'w', encoding='utf-8') as f:
-                json.dump(results, f, indent=2, ensure_ascii=False)
+                json.dump(data, f, indent=2, ensure_ascii=False)
 
-        elif format == 'txt':
+        elif format_type == 'txt':
             with open(output_path, 'w', encoding='utf-8') as f:
-                f.write(str(results))
+                f.write(str(data))
 
-        # TODO: Implémenter les autres formats (HTML, CSV)
+        elif format_type == 'html':
+            # Génération HTML basique
+            html_content = generate_html_report(data)
+            with open(output_path, 'w', encoding='utf-8') as f:
+                f.write(html_content)
+
+        elif format_type == 'markdown':
+            # Génération Markdown basique
+            md_content = generate_markdown_report(data)
+            with open(output_path, 'w', encoding='utf-8') as f:
+                f.write(md_content)
 
         print(f"💾 Résultats sauvegardés: {output_path}")
+        logger.info(f"Résultats sauvegardés dans {output_path}")
 
     except Exception as e:
-        logger.error(f"Erreur sauvegarde: {e}")
-        print(f"⚠️ Erreur sauvegarde: {e}", file=sys.stderr)
+        logger.error(f"Erreur lors de la sauvegarde: {e}")
+        print(f"⚠️ Impossible de sauvegarder: {e}")
 
 
-def display_application_status() -> None:
-    """Affiche le statut de l'application"""
-    print("\n📊 Statut de l'application:")
-
-    try:
-        status = get_application_status()
-
-        # Statut global
-        status_text = status.get("status", "unknown")
-        status_icon = "✅" if status_text == "running" else "❌"
-        print(f"   {status_icon} Statut: {status_text}")
-        print(f"   📌 Version: {status.get('version', '1.0.0')}")
-        print(f"   💬 Message: {status.get('message', 'OK')}")
-
-        # Composants
-        components = status.get("components_available", {})
-        if components:
-            print(f"\n🧩 Composants:")
-            for component, available in components.items():
-                icon = "✅" if available else "❌"
-                print(f"   {icon} {component}")
-
-        # Dépendances
-        deps = status.get("dependencies", {})
-        if deps:
-            print(f"\n📦 Dépendances:")
-
-            python_packages = deps.get("python_packages", {})
-            for package, pkg_status in python_packages.items():
-                icon = "✅" if pkg_status == "available" else "❌"
-                print(f"   {icon} {package}")
-
-            external_tools = deps.get("external_tools", {})
-            for tool, tool_status in external_tools.items():
-                icon = "✅" if tool_status == "available" else "❌"
-                print(f"   {icon} {tool}")
-
-        # Recommandations
-        missing = status.get("missing_critical", [])
-        if missing:
-            print(f"\n⚠️ Dépendances critiques manquantes:")
-            for dep in missing:
-                print(f"   • {dep}")
-            print(f"   💡 Exécutez: ./scripts/install.sh")
-        else:
-            print(f"\n✅ Toutes les dépendances critiques sont disponibles !")
-
-    except Exception as e:
-        print(f"❌ Erreur lors de la vérification du statut: {e}")
+def generate_html_report(data: Dict[str, Any]) -> str:
+    """Génère un rapport HTML basique"""
+    return f"""
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Rapport d'Analyse</title>
+    <style>
+        body {{ font-family: Arial, sans-serif; margin: 20px; }}
+        .vulnerability {{ border: 1px solid #ddd; padding: 10px; margin: 10px 0; }}
+        .critical {{ border-left: 5px solid red; }}
+        .high {{ border-left: 5px solid orange; }}
+        .medium {{ border-left: 5px solid yellow; }}
+        .low {{ border-left: 5px solid green; }}
+    </style>
+</head>
+<body>
+    <h1>Rapport d'Analyse de Sécurité</h1>
+    <pre>{json.dumps(data, indent=2, ensure_ascii=False)}</pre>
+</body>
+</html>
+    """
 
 
-def check_dependencies() -> None:
-    """Vérifie les dépendances et affiche le résultat"""
-    print("🔍 Vérification des dépendances...")
+def generate_markdown_report(data: Dict[str, Any]) -> str:
+    """Génère un rapport Markdown basique"""
+    return f"""# Rapport d'Analyse de Sécurité
 
-    try:
-        status = get_application_status()
-        deps = status.get("dependencies", {})
+## Résultats
 
-        python_packages = deps.get("python_packages", {})
-        if python_packages:
-            print(f"\n📦 Packages Python:")
-            for package, pkg_status in python_packages.items():
-                icon = "✅" if pkg_status == "available" else "❌"
-                print(f"   {icon} {package}")
-
-        external_tools = deps.get("external_tools", {})
-        if external_tools:
-            print(f"\n🔧 Outils externes:")
-            for tool, tool_status in external_tools.items():
-                icon = "✅" if tool_status == "available" else "❌"
-                print(f"   {icon} {tool}")
-
-        missing = status.get("missing_critical", [])
-        if missing:
-            print(f"\n❌ {len(missing)} dépendances critiques manquantes")
-            return False
-        else:
-            print(f"\n✅ Toutes les dépendances sont disponibles !")
-            return True
-
-    except Exception as e:
-        print(f"❌ Erreur vérification dépendances: {e}")
-        return False
+```json
+{json.dumps(data, indent=2, ensure_ascii=False)}
+```
+"""
 
 
-def run_basic_tests() -> int:
-    """Lance des tests de base"""
-    print("🧪 Lancement des tests de base...")
-
-    try:
-        # Test 1: Configuration
-        print("📋 Test de configuration...", end="")
-        config = get_config()
-        print(" ✅")
-
-        # Test 2: Modules core
-        print("🧩 Test des modules core...", end="")
-        from src.core import Collector, Analyzer, Generator
-        print(" ✅")
-
-        # Test 3: Base de données
-        print("🗄️ Test de base de données...", end="")
-        from src.database import Database
-        db = Database()
-        print(" ✅")
-
-        # Test 4: API
-        print("🌐 Test de l'API...", end="")
-        from src.api import create_app
-        app = create_app()
-        print(" ✅")
-
-        print("\n✅ Tous les tests de base sont passés !")
-        return 0
-
-    except Exception as e:
-        print(f" ❌")
-        print(f"❌ Erreur lors des tests: {e}")
-        logger.error(f"Erreur tests de base: {e}")
-        return 1
-
+# ============================================================================
+# MAIN
+# ============================================================================
 
 async def main() -> int:
     """
@@ -884,7 +1098,7 @@ async def main() -> int:
         return 0 if check_dependencies() else 1
 
     if args.test:
-        return run_basic_tests()
+        return await run_basic_tests()
 
     # Valider les arguments
     validate_arguments(args)
@@ -929,383 +1143,29 @@ async def main() -> int:
         if supervisor_instance:
             try:
                 await supervisor_instance.shutdown()
-            except:
-                pass
-
-
-async def handle_analyze_command(args) -> int:
-    """
-    Traite la commande d'analyse IA
-
-    Args:
-        args: Arguments parsés
-
-    Returns:
-        int: Code de retour
-    """
-    try:
-        logger.info("🧠 Début de l'analyse IA")
-
-        # Créer le superviseur
-        global supervisor_instance
-        config = get_config()
-        supervisor_instance = create_agent(config)
-
-        # Charger les données de vulnérabilités
-        if args.analyze_file:
-            print(f"📂 Chargement du fichier: {args.analyze_file}")
-
-            import json
-            with open(args.analyze_file, 'r', encoding='utf-8') as f:
-                vulnerabilities_data = json.load(f)
-
-            # S'assurer que c'est une liste
-            if isinstance(vulnerabilities_data, dict):
-                if 'vulnerabilities' in vulnerabilities_data:
-                    vulnerabilities_data = vulnerabilities_data['vulnerabilities']
-                else:
-                    vulnerabilities_data = [vulnerabilities_data]
-
-        else:
-            # Analyser à partir d'un scan
-            print(f"🔍 Scan et analyse de: {args.target}")
-            scan_result = await supervisor_instance.run_scan(args.target, args.scan_type)
-            vulnerabilities_data = [vuln.to_dict() for vuln in scan_result.vulnerabilities]
-
-        if not vulnerabilities_data:
-            print("⚠️ Aucune vulnérabilité à analyser")
-            return 0
-
-        print(f"🧠 Analyse de {len(vulnerabilities_data)} vulnérabilités...")
-
-        # Lancer l'analyse
-        analysis_result = await supervisor_instance.analyze_vulnerabilities(
-            vulnerabilities_data=vulnerabilities_data,
-            target_system=args.target or "Système inconnu"
-        )
-
-        # Afficher les résultats
-        print(f"\n✅ Analyse terminée:")
-        print(f"   • Vulnérabilités analysées: {len(analysis_result.vulnerabilities)}")
-        print(f"   • Score de risque global: {analysis_result.analysis_summary.get('overall_risk_score', 0):.1f}/10")
-        print(f"   • Modèle IA utilisé: {analysis_result.ai_model_used}")
-        print(f"   • Confiance: {analysis_result.confidence_score:.1%}")
-
-        # Afficher le résumé par gravité
-        summary = analysis_result.analysis_summary
-        if 'critical_count' in summary:
-            print(f"\n📊 Répartition par gravité:")
-            print(f"   🔴 Critiques: {summary.get('critical_count', 0)}")
-            print(f"   🟠 Élevées: {summary.get('high_count', 0)}")
-            print(f"   🟡 Moyennes: {summary.get('medium_count', 0)}")
-            print(f"   🟢 Faibles: {summary.get('low_count', 0)}")
-
-        # Afficher les actions prioritaires
-        if 'immediate_actions_required' in summary:
-            immediate = summary['immediate_actions_required']
-            if immediate > 0:
-                print(f"\n⚠️ Actions immédiates requises: {immediate}")
-
-                # Afficher les vulnérabilités prioritaires
-                priority_vulns = sorted(
-                    analysis_result.vulnerabilities,
-                    key=lambda v: v.priority_score,
-                    reverse=True
-                )[:3]
-
-                for vuln in priority_vulns:
-                    if vuln.priority_score >= 8:
-                        severity_icon = {"CRITICAL": "🔴", "HIGH": "🟠", "MEDIUM": "🟡", "LOW": "🟢"}.get(vuln.severity, "⚪")
-                        print(f"   {severity_icon} {vuln.name} (Priorité: {vuln.priority_score}/10)")
-
-        # Sauvegarder si demandé
-        if args.output:
-            await save_results(analysis_result.to_dict(), args.output, args.format)
-
-        return 0
-
-    except Exception as e:
-        logger.error(f"Erreur lors de l'analyse: {e}")
-        print(f"❌ Erreur: {e}", file=sys.stderr)
-        return 1
-    finally:
-        if supervisor_instance:
-            await supervisor_instance.shutdown()
-
-
-async def handle_generate_command(args) -> int:
-    """
-    Traite la commande de génération de scripts
-
-    Args:
-        args: Arguments parsés
-
-    Returns:
-        int: Code de retour
-    """
-    try:
-        logger.info("🔧 Début de la génération de scripts")
-
-        # Créer le superviseur
-        global supervisor_instance
-        config = get_config()
-        supervisor_instance = create_agent(config)
-
-        # Déterminer les vulnérabilités à traiter
-        if args.analyze_file:
-            print(f"📂 Chargement des vulnérabilités: {args.analyze_file}")
-
-            import json
-            with open(args.analyze_file, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-
-            # Extraire les vulnérabilités selon le format
-            if isinstance(data, list):
-                vulnerabilities_data = data
-            elif 'vulnerabilities' in data:
-                vulnerabilities_data = data['vulnerabilities']
-            elif 'analysis_result' in data and 'vulnerabilities' in data['analysis_result']:
-                vulnerabilities_data = data['analysis_result']['vulnerabilities']
-            else:
-                vulnerabilities_data = [data]
-
-        elif args.target:
-            # Scanner d'abord, puis générer
-            print(f"🔍 Scan de {args.target} pour détecter les vulnérabilités...")
-            scan_result = await supervisor_instance.run_scan(args.target, args.scan_type)
-            vulnerabilities_data = [vuln.to_dict() for vuln in scan_result.vulnerabilities]
-        else:
-            print("❌ Aucune source de vulnérabilités spécifiée")
-            return 1
-
-        if not vulnerabilities_data:
-            print("⚠️ Aucune vulnérabilité trouvée pour la génération de scripts")
-            return 0
-
-        # Limiter le nombre selon les arguments
-        max_scripts = min(len(vulnerabilities_data), args.max_scripts)
-        vulnerabilities_to_process = vulnerabilities_data[:max_scripts]
-
-        print(f"🔧 Génération de scripts pour {len(vulnerabilities_to_process)} vulnérabilités...")
-
-        # Workflow de génération
-        workflow_params = {
-            'vulnerabilities_data': vulnerabilities_to_process,
-            'target_system': args.target_system,
-            'risk_tolerance': args.risk_tolerance,
-            'max_scripts': args.max_scripts
-        }
-
-        workflow_id = await supervisor_instance.start_workflow(
-            workflow_type=WorkflowType.GENERATE_SCRIPTS,
-            target=args.target_system,
-            parameters=workflow_params
-        )
-
-        # Attendre les résultats
-        def progress_callback(task: str, progress: int):
-            if not args.quiet:
-                print(f"\r🔧 Génération: {progress}%", end="", flush=True)
-
-        supervisor_instance.set_progress_callback(workflow_id, progress_callback)
-        result = await supervisor_instance.wait_for_workflow(workflow_id)
-
-        if not args.quiet:
-            print()  # Nouvelle ligne après la progression
-
-        # Afficher les résultats
-        scripts_generated = len(result.script_results) if result.script_results else 0
-        print(f"\n✅ Génération terminée:")
-        print(f"   • Scripts générés: {scripts_generated}")
-        print(f"   • Système cible: {args.target_system}")
-        print(f"   • Tolérance au risque: {args.risk_tolerance}")
-
-        if result.script_results:
-            print(f"\n📝 Scripts générés:")
-
-            # Compter par niveau de risque
-            risk_counts = {"LOW": 0, "MEDIUM": 0, "HIGH": 0, "CRITICAL": 0}
-
-            for script in result.script_results:
-                risk_level = script.metadata.risk_level
-                risk_counts[risk_level] += 1
-
-                # Afficher les détails des premiers scripts
-                if len([s for s in result.script_results if s == script]) <= 5:
-                    risk_icon = {"LOW": "🟢", "MEDIUM": "🟡", "HIGH": "🟠", "CRITICAL": "🔴"}.get(risk_level, "⚪")
-                    reboot_icon = " 🔄" if script.metadata.requires_reboot else ""
-                    sudo_icon = " 🔑" if script.metadata.requires_sudo else ""
-
-                    print(f"   {risk_icon} {script.script_id}")
-                    print(f"      Vulnérabilité: {script.vulnerability_id}")
-                    print(f"      Risque: {risk_level}{reboot_icon}{sudo_icon}")
-                    print(f"      Durée estimée: {script.metadata.estimated_duration}")
-
-                    # Afficher les warnings importants
-                    if script.warnings:
-                        critical_warnings = [w for w in script.warnings if "🚨" in w or "DANGER" in w.upper()]
-                        for warning in critical_warnings[:2]:
-                            print(f"      ⚠️ {warning}")
-
-            if scripts_generated > 5:
-                print(f"   ... et {scripts_generated - 5} autres scripts")
-
-            # Résumé par risque
-            print(f"\n📊 Répartition par niveau de risque:")
-            for risk, count in risk_counts.items():
-                if count > 0:
-                    risk_icon = {"LOW": "🟢", "MEDIUM": "🟡", "HIGH": "🟠", "CRITICAL": "🔴"}.get(risk, "⚪")
-                    print(f"   {risk_icon} {risk}: {count} scripts")
-
-            # Recommandations de sécurité
-            high_risk_count = risk_counts["HIGH"] + risk_counts["CRITICAL"]
-            if high_risk_count > 0:
-                print(f"\n⚠️ Attention: {high_risk_count} scripts à haut risque détectés")
-                print(f"   Recommandation: Révision manuelle obligatoire avant exécution")
-                print(f"   Testez d'abord dans un environnement de développement")
-
-        # Sauvegarder les résultats
-        if args.output:
-            await save_results(result.to_dict(), args.output, args.format)
-
-        return 0
-
-    except Exception as e:
-        logger.error(f"Erreur lors de la génération: {e}")
-        print(f"❌ Erreur: {e}", file=sys.stderr)
-        return 1
-    finally:
-        if supervisor_instance:
-            await supervisor_instance.shutdown()
-
-
-def load_targets_from_file(target_file: str) -> list:
-    """
-    Charge les cibles depuis un fichier
-
-    Args:
-        target_file: Chemin vers le fichier de cibles
-
-    Returns:
-        list: Liste des cibles
-    """
-    targets = []
-
-    try:
-        with open(target_file, 'r', encoding='utf-8') as f:
-            for line in f:
-                line = line.strip()
-                # Ignorer les commentaires et lignes vides
-                if line and not line.startswith('#'):
-                    targets.append(line)
-
-        return targets
-
-    except Exception as e:
-        logger.error(f"Erreur lecture fichier cibles: {e}")
-        raise
-
-
-def setup_directories():
-    """Crée les répertoires nécessaires s'ils n'existent pas"""
-    directories = [
-        "data/scans",
-        "data/reports",
-        "data/scripts",
-        "data/database",
-        "logs"
-    ]
-
-    for directory in directories:
-        Path(directory).mkdir(parents=True, exist_ok=True)
-
-
-def check_prerequisites() -> bool:
-    """
-    Vérifie les prérequis avant le lancement
-
-    Returns:
-        bool: True si tous les prérequis sont OK
-    """
-    issues = []
-
-    # Vérifier Python
-    if sys.version_info < (3, 10):
-        issues.append(f"Python 3.10+ requis (version actuelle: {sys.version})")
-
-    # Vérifier les répertoires
-    try:
-        setup_directories()
-    except Exception as e:
-        issues.append(f"Impossible de créer les répertoires: {e}")
-
-    # Vérifier la configuration
-    try:
-        config = get_config()
-        result = validate_config(config)
-
-        # Si validate_config retourne un dict avec status
-        if isinstance(result, dict):
-            if not result.get('valid', True):
-                for issue in result.get('issues', []):
-                    issues.append(f"Configuration: {issue}")
-
-    except Exception as e:
-        issues.append(f"Configuration invalide: {e}")
-
-    # Vérifier les dépendances critiques (mode permissif)
-    try:
-        status = get_application_status()
-        missing = status.get("missing_critical", [])
-
-        # Avertir mais ne pas bloquer
-        if missing:
-            print(f"⚠️  Dépendances optionnelles manquantes: {', '.join(missing)}")
-            print(f"   L'application peut fonctionner en mode dégradé")
-
-    except Exception as e:
-        # Si get_application_status échoue, continuer quand même
-        print(f"⚠️  Impossible de vérifier le statut: {e}")
-
-    if issues:
-        print("❌ Prérequis critiques non satisfaits:", file=sys.stderr)
-        for issue in issues:
-            print(f"   • {issue}", file=sys.stderr)
-        return False
-
-    return True
-
-
-def main_sync():
-    """Point d'entrée synchrone pour les cas non-async"""
-    # Détection du mode API pour éviter le conflit asyncio
-    if '--api' in sys.argv:
-        # Mode API : lancer directement sans asyncio
-        parser = create_argument_parser()
-        args = parser.parse_args()
-        configure_logging(args)
-        if not args.quiet:
-            print_application_banner()
-        validate_arguments(args)
-        return handle_api_command(args)
-    else:
-        # Autres modes : utiliser asyncio normalement
-        return asyncio.run(main())
+            except Exception as e:
+                logger.error(f"Erreur lors du shutdown: {e}")
 
 
 if __name__ == "__main__":
+    # Afficher les informations de configuration au démarrage
     try:
-        # Vérifier les prérequis de base
-        if not check_prerequisites():
-            sys.exit(1)
+        config = get_config()
+        print("✅ Configuration OpenAI chargée:")
+        print(f"   - Modèle: {config.get('openai_model', 'N/A')}")
+        print(f"   - Timeout: {config.get('openai_timeout', 'N/A')}s")
+        print(f"   - Max tokens: {config.get('openai_max_tokens', 'N/A')}")
 
-        # Lancer le programme principal
-        exit_code = main_sync()
-        sys.exit(exit_code)
+        print("💰 Limites pour économiser les tokens:")
+        print(f"   - Vulnérabilités analysées max: 10")
+        print(f"   - Scripts générés max: 5")
 
-    except KeyboardInterrupt:
-        print("\n🛑 Interruption par l'utilisateur")
-        sys.exit(130)
+        print("⚡ Types de scans disponibles:")
+        for scan_type, info in SCAN_TYPES.items():
+            print(f"   - {scan_type}: {info['description']}")
     except Exception as e:
-        print(f"❌ Erreur fatale: {e}", file=sys.stderr)
-        sys.exit(1)
+        print(f"⚠️ Avertissement configuration: {e}")
+
+    # Lancer l'application
+    exit_code = asyncio.run(main())
+    sys.exit(exit_code)

@@ -32,7 +32,7 @@ class Config:
     # === CONFIGURATION API ===
     openai_api_key: str
     openai_model: str = "gpt-3.5-turbo"  # Changé de gpt-4 à gpt-3.5-turbo (plus rapide)
-    openai_max_tokens: int = 1000  # ← MODIFIÉ : Réduit de 2000 à 1000
+    openai_max_tokens: int = 3000  # ← MODIFIÉ : Réduit de 2000 à 1000
     openai_temperature: float = 0.3
 
     # === CONFIGURATION SCAN ===
