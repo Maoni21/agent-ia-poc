@@ -247,9 +247,9 @@ python-magic>=0.4.27; sys_platform != "win32"
 # Ces dépendances sont nécessaires si vous utilisez l'API REST
 # Installation: pip install -r requirements.txt -r requirements-api.txt
 
-# FastAPI et serveur ASGI (commentées par défaut)
-# fastapi>=0.108.0
-# uvicorn[standard]>=0.25.0
+# FastAPI et serveur ASGI
+fastapi>=0.108.0
+uvicorn[standard]>=0.25.0
 # python-multipart>=0.0.6
 # python-jose[cryptography]>=3.3.0
 

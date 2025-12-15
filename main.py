@@ -968,7 +968,8 @@ def handle_api_command(args) -> int:
         print(f"   Port: {args.port}\n")
 
         import uvicorn
-        from src.api.routes import app
+        # L'application FastAPI est définie dans src/api/main.py (routes.py n'expose qu'un router)
+        from src.api.main import app
 
         uvicorn.run(
             app,

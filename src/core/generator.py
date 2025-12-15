@@ -87,7 +87,9 @@ class Generator:
         }
 
         # Détection du provider
-        self.ai_provider = self.config.get('ai_provider', 'anthropic')
+        # Par défaut, le projet est configuré via config/settings.py avec une clé OpenAI.
+        # On utilise donc OpenAI par défaut pour éviter d'exiger une config Anthropic inexistante.
+        self.ai_provider = self.config.get('ai_provider', 'openai')
 
         # Initialisation du client IA selon le provider
         if self.ai_provider == 'openai':

@@ -4,10 +4,9 @@ Backend FastAPI professionnel
 """
 
 from fastapi import FastAPI, HTTPException
-from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-from typing import List, Optional
+from typing import Optional, Any, Dict
 from datetime import datetime, timedelta
 import json
 from pathlib import Path
@@ -29,13 +28,32 @@ app.add_middleware(
 )
 
 # Configuration des chemins
-BASE_DIR = Path(__file__).parent
-DATA_DIR = BASE_DIR / "data"
+# Le projet stocke ses données dans /data (à la racine du repo).
+# On calcule donc la racine du projet à partir de src/web/dashboard_api.py.
+BASE_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = BASE_DIR.parents[2]
+DATA_DIR = PROJECT_ROOT / "data"
 DB_PATH = DATA_DIR / "database" / "vulnerability_agent.db"
 WORKFLOWS_DIR = DATA_DIR / "workflow_results"
 
 
 # ===== HELPER FUNCTIONS =====
+
+def _table_has_column(conn: sqlite3.Connection, table: str, column: str) -> bool:
+    """Vérifie si une colonne existe dans une table SQLite (compat schémas)."""
+    try:
+        rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+        return any(r[1] == column for r in rows)  # r[1] = column name
+    except Exception:
+        return False
+
+
+def _first_existing_column(conn: sqlite3.Connection, table: str, candidates: list[str]) -> Optional[str]:
+    """Retourne la première colonne existante parmi candidates."""
+    for col in candidates:
+        if _table_has_column(conn, table, col):
+            return col
+    return None
 
 def get_db_connection():
     """Connexion à la base de données"""
@@ -92,13 +110,18 @@ async def get_overview_stats():
         # Total vulnérabilités
         total_vulns = cursor.execute("SELECT COUNT(*) FROM vulnerabilities").fetchone()[0]
 
-        # Vulnérabilités critiques non résolues
-        critical_vulns = cursor.execute(
-            "SELECT COUNT(*) FROM vulnerabilities WHERE severity IN ('CRITICAL', 'HIGH') AND status != 'resolved'"
-        ).fetchone()[0]
+        # Vulnérabilités critiques (et/ou non résolues si la colonne existe)
+        if _table_has_column(conn, "vulnerabilities", "status"):
+            critical_vulns = cursor.execute(
+                "SELECT COUNT(*) FROM vulnerabilities WHERE severity IN ('CRITICAL', 'HIGH') AND status != 'resolved'"
+            ).fetchone()[0]
+        else:
+            critical_vulns = cursor.execute(
+                "SELECT COUNT(*) FROM vulnerabilities WHERE severity IN ('CRITICAL', 'HIGH')"
+            ).fetchone()[0]
 
-        # Scripts générés
-        total_scripts = cursor.execute("SELECT COUNT(*) FROM remediation_scripts").fetchone()[0]
+        # Scripts générés (table 'scripts' dans le schéma du projet)
+        total_scripts = cursor.execute("SELECT COUNT(*) FROM scripts").fetchone()[0]
 
         # Moyenne CVSS
         avg_cvss = cursor.execute("SELECT AVG(cvss_score) FROM vulnerabilities").fetchone()[0] or 0.0
@@ -127,12 +150,16 @@ async def get_severity_distribution():
         conn = get_db_connection()
         cursor = conn.cursor()
 
-        severity_counts = cursor.execute("""
-            SELECT 
+        where_clause = ""
+        if _table_has_column(conn, "vulnerabilities", "status"):
+            where_clause = "WHERE status != 'resolved'"
+
+        severity_counts = cursor.execute(f"""
+            SELECT
                 severity,
                 COUNT(*) as count
             FROM vulnerabilities
-            WHERE status != 'resolved'
+            {where_clause}
             GROUP BY severity
         """).fetchall()
 
@@ -170,14 +197,19 @@ async def get_vulnerability_timeline():
         conn = get_db_connection()
         cursor = conn.cursor()
 
-        # Derniers 30 jours
-        timeline_data = cursor.execute("""
-            SELECT 
-                DATE(discovered_at) as date,
+        # Derniers 30 jours (compat: discovered_at peut ne pas exister → fallback created_at)
+        date_col = _first_existing_column(conn, "vulnerabilities", ["discovered_at", "created_at"])
+        if not date_col:
+            conn.close()
+            return {"labels": [], "datasets": [{"label": "Vulnérabilités détectées", "data": []}]}
+
+        timeline_data = cursor.execute(f"""
+            SELECT
+                DATE({date_col}) as date,
                 COUNT(*) as count
             FROM vulnerabilities
-            WHERE discovered_at >= date('now', '-30 days')
-            GROUP BY DATE(discovered_at)
+            WHERE DATE({date_col}) >= date('now', '-30 days')
+            GROUP BY DATE({date_col})
             ORDER BY date ASC
         """).fetchall()
 
@@ -254,11 +286,19 @@ async def get_scan_details(scan_id: str):
         if not scan:
             raise HTTPException(status_code=404, detail="Scan non trouvé")
 
-        # Récupérer les vulnérabilités associées
-        vulnerabilities = cursor.execute(
-            "SELECT * FROM vulnerabilities WHERE scan_id = ?",
-            (scan_id,)
-        ).fetchall()
+        # Récupérer les vulnérabilités associées (compat: jointure via scan_vulnerabilities si table présente)
+        if _table_has_column(conn, "scan_vulnerabilities", "scan_id"):
+            vulnerabilities = cursor.execute("""
+                SELECT v.*
+                FROM vulnerabilities v
+                JOIN scan_vulnerabilities sv ON sv.vulnerability_id = v.vulnerability_id
+                WHERE sv.scan_id = ?
+            """, (scan_id,)).fetchall()
+        else:
+            vulnerabilities = cursor.execute(
+                "SELECT * FROM vulnerabilities WHERE scan_id = ?",
+                (scan_id,)
+            ).fetchall()
 
         conn.close()
 
@@ -301,7 +341,11 @@ async def get_vulnerabilities(
             query += " AND (vulnerability_id LIKE ? OR name LIKE ?)"
             params.extend([f"%{search}%", f"%{search}%"])
 
-        query += " ORDER BY cvss_score DESC, discovered_at DESC LIMIT ?"
+        order_date_col = _first_existing_column(conn, "vulnerabilities", ["discovered_at", "created_at"])
+        if order_date_col:
+            query += f" ORDER BY cvss_score DESC, {order_date_col} DESC LIMIT ?"
+        else:
+            query += " ORDER BY cvss_score DESC LIMIT ?"
         params.append(limit)
 
         vulnerabilities = cursor.execute(query, params).fetchall()
@@ -335,7 +379,7 @@ async def get_vulnerability_details(vuln_id: str):
 
         # Récupérer les scripts de remédiation associés
         scripts = cursor.execute(
-            "SELECT * FROM remediation_scripts WHERE vulnerability_id = ?",
+            "SELECT * FROM scripts WHERE vulnerability_id = ? ORDER BY created_at DESC",
             (vuln_id,)
         ).fetchall()
 
@@ -363,22 +407,37 @@ async def get_scripts(
         conn = get_db_connection()
         cursor = conn.cursor()
 
-        query = "SELECT * FROM remediation_scripts"
+        query = "SELECT * FROM scripts"
         params = []
 
         if status:
             query += " WHERE validation_status = ?"
             params.append(status)
 
-        query += " ORDER BY generated_at DESC LIMIT ?"
+        # Compat: generated_at peut ne pas exister → created_at
+        order_col = _first_existing_column(conn, "scripts", ["generated_at", "created_at"])
+        if order_col:
+            query += f" ORDER BY {order_col} DESC LIMIT ?"
+        else:
+            query += " ORDER BY id DESC LIMIT ?"
         params.append(limit)
 
         scripts = cursor.execute(query, params).fetchall()
 
         conn.close()
 
+        # Normaliser quelques champs attendus par le front (dashboard.html)
+        scripts_payload = []
+        for s in scripts:
+            item: Dict[str, Any] = dict(s)
+            item.setdefault("confidence_score", 0.0)
+            item.setdefault("risk_level", item.get("risk_level") or "medium")
+            item.setdefault("validation_status", item.get("validation_status") or "review_required")
+            item.setdefault("generated_at", item.get("generated_at") or item.get("created_at"))
+            scripts_payload.append(item)
+
         return {
-            "scripts": [dict(script) for script in scripts],
+            "scripts": scripts_payload,
             "count": len(scripts)
         }
 

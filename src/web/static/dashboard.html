@@ -380,7 +380,8 @@
 
     <!-- JavaScript -->
     <script>
-        const API_BASE = 'http://localhost:8000/api';
+        // Utiliser une URL relative pour fonctionner quel que soit l'hôte/le port.
+        const API_BASE = '/api';
 
         let severityChart = null;
         let timelineChart = null;
