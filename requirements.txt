@@ -39,6 +39,9 @@ requests>=2.31.0
 httpx>=0.26.0
 # Client HTTP asynchrone moderne (alternative à requests)
 
+aiohttp>=3.9.0
+# Client HTTP asynchrone pour les notifications (Slack, Teams)
+
 # Configuration et validation des données
 pydantic>=2.5.0
 # Validation de données avec annotations de type
@@ -65,6 +68,10 @@ asyncio-mqtt>=0.16.1
 
 aiofiles>=23.2.1
 # Opérations de fichier asynchrones
+
+# WebSocket pour communication temps réel
+websockets>=12.0
+# Client et serveur WebSocket asynchrone
 
 # ================================================================================
 # DATABASE ET PERSISTANCE - Base de données et stockage
@@ -188,6 +195,13 @@ pyyaml>=6.0.1
 
 toml>=0.10.2
 # Parser TOML pour fichiers de configuration Python
+
+# Génération de rapports PDF
+reportlab>=4.0.7
+# Génération de documents PDF professionnels
+
+pillow>=10.2.0
+# Traitement d'images pour les PDFs (requis par ReportLab)
 
 # ================================================================================
 # UTILITIES ET HELPERS - Utilitaires divers

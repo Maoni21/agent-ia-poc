@@ -84,9 +84,17 @@ class Config:
 NMAP_DEFAULT_ARGS = os.getenv("NMAP_DEFAULT_ARGS", "-sV -sC --script vuln")
 SCAN_TIMEOUT = int(os.getenv("SCAN_TIMEOUT", "300"))
 
-# Configuration OpenAI - OPTIMISÉE pour éviter les timeouts
+# Configuration AI Provider
+AI_PROVIDER = os.getenv("AI_PROVIDER", "openai").lower()  # openai ou anthropic
+
+# Configuration OpenAI
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-3.5-turbo")  # Changé de gpt-4
+
+# Configuration Anthropic
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
+ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")
+
 MAX_TOKENS = int(os.getenv("MAX_TOKENS", "1000"))  # ← MODIFIÉ : Réduit de 2000 à 1000
 TEMPERATURE = float(os.getenv("TEMPERATURE", "0.3"))
 
@@ -211,17 +219,29 @@ def get_config() -> Config:
         Config: Instance de configuration avec tous les paramètres
 
     Raises:
-        ValueError: Si la clé API OpenAI n'est pas définie
+        ValueError: Si la clé API n'est pas définie selon le provider
     """
-    if not OPENAI_API_KEY:
-        raise ValueError(
-            "OPENAI_API_KEY n'est pas définie. "
-            "Veuillez configurer votre fichier .env"
-        )
+    # Vérifier la clé API selon le provider
+    if AI_PROVIDER == "anthropic":
+        if not ANTHROPIC_API_KEY:
+            raise ValueError(
+                "ANTHROPIC_API_KEY n'est pas définie. "
+                "Veuillez configurer votre fichier .env avec AI_PROVIDER=anthropic et ANTHROPIC_API_KEY"
+            )
+        api_key = ANTHROPIC_API_KEY
+        model = ANTHROPIC_MODEL
+    else:
+        if not OPENAI_API_KEY:
+            raise ValueError(
+                "OPENAI_API_KEY n'est pas définie. "
+                "Veuillez configurer votre fichier .env"
+            )
+        api_key = OPENAI_API_KEY
+        model = OPENAI_MODEL
 
     return Config(
-        openai_api_key=OPENAI_API_KEY,
-        openai_model=OPENAI_MODEL,
+        openai_api_key=api_key,  # Utiliser la bonne clé selon le provider
+        openai_model=model,  # Utiliser le bon modèle selon le provider
         openai_max_tokens=MAX_TOKENS,
         openai_temperature=TEMPERATURE,
         nmap_default_args=NMAP_DEFAULT_ARGS,

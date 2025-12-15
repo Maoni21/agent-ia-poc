@@ -16,6 +16,7 @@ from config import get_config
 from src.utils.logger import setup_logger
 from src.database.database import Database
 from .exceptions import AnalyzerException, CoreErrorCodes
+from .false_positive_detector import FalsePositiveDetector
 
 logger = setup_logger(__name__)
 
@@ -44,6 +45,9 @@ class VulnerabilityAnalysis:
     correction_script: Optional[str] = None
     rollback_script: Optional[str] = None
     business_impact: Optional[str] = None
+    is_false_positive: bool = False
+    false_positive_confidence: Optional[float] = None
+    false_positive_reasoning: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -88,7 +92,8 @@ class Analyzer:
             "failed_analyses": 0,
             "average_processing_time": 0.0,
             "nist_api_calls": 0,
-            "nist_cache_hits": 0
+            "nist_cache_hits": 0,
+            "false_positives_detected": 0
         }
 
         # Détection du provider
@@ -101,6 +106,14 @@ class Analyzer:
             self._init_anthropic()
         else:
             raise AnalyzerException(f"Provider IA non supporté: {self.ai_provider}", CoreErrorCodes.CORE_INIT_ERROR)
+        
+        # Initialiser le détecteur de faux positifs
+        try:
+            self.false_positive_detector = FalsePositiveDetector(self.config)
+            logger.info("✅ FalsePositiveDetector initialisé")
+        except Exception as e:
+            logger.warning(f"⚠️ FalsePositiveDetector non disponible: {e}")
+            self.false_positive_detector = None
 
     def _init_openai(self):
         """Initialise le client OpenAI"""
@@ -257,6 +270,11 @@ class Analyzer:
 
         logger.info("🤖 Analyse IA...")
         analyzed_vulns = await self._ai_analysis(enriched_vulns, target_system, business_context)
+
+        # Détection de faux positifs (si activé)
+        if self.false_positive_detector and self.config.get('enable_false_positive_detection', True):
+            logger.info("🔍 Détection de faux positifs...")
+            analyzed_vulns = await self._detect_false_positives(analyzed_vulns, target_system)
 
         return analyzed_vulns
 
@@ -557,6 +575,51 @@ JSON uniquement:
         current_avg = self.stats["average_processing_time"]
         total = self.stats["total_analyses"]
         self.stats["average_processing_time"] = (current_avg * (total - 1) + processing_time) / total
+
+    async def _detect_false_positives(
+            self,
+            analyzed_vulns: List[VulnerabilityAnalysis],
+            target_system: str
+    ) -> List[VulnerabilityAnalysis]:
+        """Détecte les faux positifs dans les vulnérabilités analysées"""
+        if not self.false_positive_detector:
+            return analyzed_vulns
+        
+        # Construire le contexte de scan (basique pour l'instant)
+        scan_context = {
+            "scan_type": "full",
+            "open_ports": [],
+            "banners": {},
+            "os": target_system
+        }
+        
+        # Analyser chaque vulnérabilité
+        for vuln in analyzed_vulns:
+            try:
+                vuln_dict = vuln.to_dict()
+                fp_analysis = await self.false_positive_detector.analyze_vulnerability(
+                    vuln_dict,
+                    scan_context
+                )
+                
+                # Mettre à jour la vulnérabilité avec les résultats
+                vuln.is_false_positive = fp_analysis.is_false_positive
+                vuln.false_positive_confidence = fp_analysis.confidence
+                vuln.false_positive_reasoning = fp_analysis.reasoning
+                
+                # Mettre à jour les stats
+                if fp_analysis.is_false_positive:
+                    self.stats["false_positives_detected"] += 1
+                    logger.info(f"⚠️ Faux positif détecté: {vuln.vulnerability_id} (confiance: {fp_analysis.confidence:.2f})")
+                
+                # Petite pause pour éviter le rate limiting
+                await asyncio.sleep(0.5)
+                
+            except Exception as e:
+                logger.warning(f"Erreur détection faux positif pour {vuln.vulnerability_id}: {e}")
+                continue
+        
+        return analyzed_vulns
 
     def get_stats(self) -> Dict[str, Any]:
         """Retourne les statistiques"""

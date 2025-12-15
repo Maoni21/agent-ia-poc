@@ -219,6 +219,24 @@
                     </div>
                 </div>
 
+                <!-- Statistiques Faux Positifs -->
+                <div class="bg-white rounded-lg shadow-lg p-6 fade-in mb-8">
+                    <h3 class="text-lg font-semibold text-gray-900 mb-4">
+                        <i class="fas fa-filter mr-2 text-purple-600"></i>
+                        Analyse des Faux Positifs
+                    </h3>
+                    <div class="grid grid-cols-2 gap-4">
+                        <div class="p-4 bg-purple-50 rounded-lg">
+                            <div class="text-sm text-gray-600">Faux Positifs Détectés</div>
+                            <div class="text-2xl font-bold text-purple-600" id="stat-false-positives">-</div>
+                        </div>
+                        <div class="p-4 bg-green-50 rounded-lg">
+                            <div class="text-sm text-gray-600">Vrais Positifs Confirmés</div>
+                            <div class="text-2xl font-bold text-green-600" id="stat-true-positives">-</div>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Top Vulnérabilités -->
                 <div class="bg-white rounded-lg shadow-lg p-6 fade-in">
                     <h3 class="text-lg font-semibold text-gray-900 mb-4">
@@ -239,7 +257,7 @@
                             </thead>
                             <tbody class="bg-white divide-y divide-gray-200" id="top-vulns-tbody">
                                 <tr>
-                                    <td colspan="6" class="px-6 py-4 text-center text-gray-500">
+                                    <td colspan="7" class="px-6 py-4 text-center text-gray-500">
                                         <i class="fas fa-spinner fa-spin mr-2"></i>Chargement...
                                     </td>
                                 </tr>
@@ -267,6 +285,12 @@
                                 <option value="LOW">Faible</option>
                             </select>
 
+                            <select id="filter-false-positive" onchange="filterVulnerabilities()" class="rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
+                                <option value="">Tous</option>
+                                <option value="false_positive">Faux positifs</option>
+                                <option value="true_positive">Vrais positifs</option>
+                            </select>
+
                             <input
                                 type="text"
                                 id="search-vulns"
@@ -286,13 +310,14 @@
                                     <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Sévérité</th>
                                     <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">CVSS</th>
                                     <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Service</th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Faux Positif</th>
                                     <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Statut</th>
                                     <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
                                 </tr>
                             </thead>
                             <tbody class="bg-white divide-y divide-gray-200" id="vulns-tbody">
                                 <tr>
-                                    <td colspan="7" class="px-6 py-4 text-center text-gray-500">
+                                    <td colspan="8" class="px-6 py-4 text-center text-gray-500">
                                         <i class="fas fa-spinner fa-spin mr-2"></i>Chargement...
                                     </td>
                                 </tr>
@@ -310,7 +335,7 @@
                             <i class="fas fa-radar mr-2"></i>
                             Historique des Scans
                         </h2>
-                        <button onclick="alert('Fonctionnalité à venir')" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md">
+                        <button onclick="openScanModal()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md">
                             <i class="fas fa-plus mr-2"></i>Nouveau Scan
                         </button>
                     </div>
@@ -326,11 +351,12 @@
                                     <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Vulns</th>
                                     <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Démarré</th>
                                     <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Durée</th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
                                 </tr>
                             </thead>
                             <tbody class="bg-white divide-y divide-gray-200" id="scans-tbody">
                                 <tr>
-                                    <td colspan="7" class="px-6 py-4 text-center text-gray-500">
+                                    <td colspan="8" class="px-6 py-4 text-center text-gray-500">
                                         <i class="fas fa-spinner fa-spin mr-2"></i>Chargement...
                                     </td>
                                 </tr>
@@ -375,15 +401,181 @@
                 </div>
             </div>
 
+            <!-- VUE PROGRESSION DU SCAN -->
+            <div id="scan-progress-view" class="view-container hidden">
+                <div class="bg-white rounded-lg shadow-lg p-6">
+                    <h2 class="text-2xl font-bold mb-4">
+                        <i class="fas fa-spinner fa-spin mr-2 text-blue-600"></i>
+                        Scan en cours...
+                    </h2>
+                    
+                    <!-- Barre de progression -->
+                    <div class="mb-6">
+                        <div class="flex justify-between mb-2">
+                            <span id="progress-percentage" class="text-lg font-semibold text-blue-600">0%</span>
+                            <span id="progress-step" class="text-sm text-gray-600">Initialisation...</span>
+                        </div>
+                        <div class="w-full bg-gray-200 rounded-full h-4">
+                            <div id="progress-fill" class="bg-blue-600 h-4 rounded-full transition-all duration-300" style="width: 0%"></div>
+                        </div>
+                    </div>
+                    
+                    <!-- Étapes du scan -->
+                    <div class="space-y-3 mb-6">
+                        <div class="flex items-center step-item" id="step-init">
+                            <i class="fas fa-circle text-gray-300 mr-3"></i>
+                            <span class="text-gray-700">Initialisation</span>
+                        </div>
+                        <div class="flex items-center step-item" id="step-scan">
+                            <i class="fas fa-circle text-gray-300 mr-3"></i>
+                            <span class="text-gray-700">Scan Nmap</span>
+                        </div>
+                        <div class="flex items-center step-item" id="step-analysis">
+                            <i class="fas fa-circle text-gray-300 mr-3"></i>
+                            <span class="text-gray-700">Analyse IA</span>
+                        </div>
+                        <div class="flex items-center step-item" id="step-scripts">
+                            <i class="fas fa-circle text-gray-300 mr-3"></i>
+                            <span class="text-gray-700">Génération Scripts</span>
+                        </div>
+                        <div class="flex items-center step-item" id="step-complete">
+                            <i class="fas fa-circle text-gray-300 mr-3"></i>
+                            <span class="text-gray-700">Finalisation</span>
+                        </div>
+                    </div>
+                    
+                    <!-- Estimation de temps -->
+                    <div class="mt-6 p-4 bg-blue-50 rounded-lg">
+                        <div class="flex items-center justify-between">
+                            <span class="text-gray-700">Temps restant estimé:</span>
+                            <span id="time-remaining" class="font-bold text-blue-600">5:00</span>
+                        </div>
+                    </div>
+                    
+                    <!-- Message de statut -->
+                    <div class="mt-4">
+                        <p id="status-message" class="text-gray-600 italic">
+                            Préparation du scan...
+                        </p>
+                    </div>
+
+                    <!-- Bouton retour -->
+                    <div class="mt-6">
+                        <button onclick="showView('scans')" class="bg-gray-500 hover:bg-gray-600 text-white px-4 py-2 rounded-md">
+                            <i class="fas fa-arrow-left mr-2"></i>Retour aux scans
+                        </button>
+                    </div>
+                </div>
+            </div>
+
         </main>
+    </div>
+
+    <!-- MODAL DE LANCEMENT DE SCAN -->
+    <div id="scan-modal" class="fixed inset-0 bg-gray-600 bg-opacity-50 hidden z-50">
+        <div class="flex items-center justify-center min-h-screen p-4">
+            <div class="bg-white rounded-lg shadow-xl max-w-md w-full">
+                <div class="p-6">
+                    <div class="flex justify-between items-center mb-4">
+                        <h2 class="text-2xl font-bold text-gray-900">
+                            <i class="fas fa-radar mr-2 text-blue-600"></i>
+                            Lancer un Nouveau Scan
+                        </h2>
+                        <button onclick="closeScanModal()" class="text-gray-400 hover:text-gray-600">
+                            <i class="fas fa-times text-xl"></i>
+                        </button>
+                    </div>
+                    
+                    <form id="scan-form" onsubmit="launchScan(event)">
+                        <div class="mb-4">
+                            <label class="block text-sm font-medium text-gray-700 mb-2">
+                                Adresse IP ou Domaine Cible
+                            </label>
+                            <input
+                                type="text"
+                                id="target-ip"
+                                placeholder="192.168.1.100 ou example.com"
+                                required
+                                class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                            />
+                        </div>
+                        
+                        <div class="mb-4">
+                            <label class="block text-sm font-medium text-gray-700 mb-2">
+                                Type de Scan
+                            </label>
+                            <select
+                                id="scan-type"
+                                class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                            >
+                                <option value="quick">Quick Scan (5-10 min)</option>
+                                <option value="full" selected>Full Scan (20-30 min)</option>
+                                <option value="stealth">Stealth Scan (15-25 min)</option>
+                                <option value="aggressive">Aggressive Scan (30-45 min)</option>
+                            </select>
+                        </div>
+                        
+                        <div class="mb-4">
+                            <label class="block text-sm font-medium text-gray-700 mb-2">
+                                Type de Workflow
+                            </label>
+                            <select
+                                id="workflow-type"
+                                class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                            >
+                                <option value="full" selected>Complet (Scan + Analyse + Scripts)</option>
+                                <option value="scan_and_analyze">Scan + Analyse uniquement</option>
+                                <option value="scan_only">Scan uniquement</option>
+                            </select>
+                        </div>
+                        
+                        <div class="mb-6">
+                            <label class="block text-sm font-medium text-gray-700 mb-2">
+                                Type de Script
+                            </label>
+                            <select
+                                id="script-type"
+                                class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                            >
+                                <option value="bash" selected>Bash Script</option>
+                                <option value="ansible">Ansible Playbook</option>
+                            </select>
+                            <p class="mt-1 text-xs text-gray-500">
+                                <i class="fas fa-info-circle mr-1"></i>
+                                Ansible: Playbooks professionnels avec rollback automatique
+                            </p>
+                        </div>
+                        
+                        <div class="flex space-x-3">
+                            <button
+                                type="submit"
+                                class="flex-1 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md font-medium"
+                            >
+                                <i class="fas fa-play mr-2"></i>Lancer le Scan
+                            </button>
+                            <button
+                                type="button"
+                                onclick="closeScanModal()"
+                                class="flex-1 bg-gray-300 hover:bg-gray-400 text-gray-700 px-4 py-2 rounded-md font-medium"
+                            >
+                                Annuler
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
     </div>
 
     <!-- JavaScript -->
     <script>
         const API_BASE = 'http://localhost:8000/api';
+        const SCAN_API_BASE = 'http://localhost:8001/api/v2';
 
         let severityChart = null;
         let timelineChart = null;
+        let currentWebSocket = null;
+        let currentScanId = null;
 
         // Initialisation au chargement
         document.addEventListener('DOMContentLoaded', function() {
@@ -430,8 +622,29 @@
                 document.getElementById('stat-critical-vulns').textContent = data.critical_vulnerabilities;
                 document.getElementById('stat-total-scripts').textContent = data.total_scripts;
                 document.getElementById('stat-avg-cvss').textContent = data.average_cvss;
+                
+                // Charger les stats de faux positifs
+                await loadFalsePositiveStats();
             } catch (error) {
                 console.error('Erreur chargement stats:', error);
+            }
+        }
+
+        // Statistiques de faux positifs
+        async function loadFalsePositiveStats() {
+            try {
+                const response = await fetch(`${API_BASE}/vulnerabilities?limit=1000`);
+                const data = await response.json();
+                
+                const falsePositives = data.vulnerabilities.filter(v => 
+                    v.is_false_positive === true || v.is_false_positive === 'true'
+                ).length;
+                const truePositives = data.vulnerabilities.length - falsePositives;
+                
+                document.getElementById('stat-false-positives').textContent = falsePositives;
+                document.getElementById('stat-true-positives').textContent = truePositives;
+            } catch (error) {
+                console.error('Erreur chargement stats faux positifs:', error);
             }
         }
 
@@ -521,12 +734,24 @@
                 tbody.innerHTML = '';
 
                 if (data.vulnerabilities.length === 0) {
-                    tbody.innerHTML = '<tr><td colspan="6" class="px-6 py-4 text-center text-gray-500">Aucune vulnérabilité détectée</td></tr>';
+                    tbody.innerHTML = '<tr><td colspan="7" class="px-6 py-4 text-center text-gray-500">Aucune vulnérabilité détectée</td></tr>';
                     return;
                 }
 
                 data.vulnerabilities.forEach(vuln => {
+                    const isFalsePositive = vuln.is_false_positive === true || vuln.is_false_positive === 'true';
+                    const falsePositiveConfidence = vuln.false_positive_confidence || 0;
+                    const falsePositiveBadge = isFalsePositive 
+                        ? `<span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-purple-100 text-purple-800" title="Confiance: ${Math.round(falsePositiveConfidence * 100)}%">
+                            <i class="fas fa-question-circle mr-1"></i>Faux Positif
+                        </span>`
+                        : '';
+                    
                     const row = document.createElement('tr');
+                    if (isFalsePositive) {
+                        row.className = 'bg-gray-50 opacity-75';
+                    }
+                    
                     row.innerHTML = `
                         <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-blue-600">${vuln.vulnerability_id}</td>
                         <td class="px-6 py-4 text-sm text-gray-900">${vuln.name || 'N/A'}</td>
@@ -535,8 +760,11 @@
                                 ${vuln.severity}
                             </span>
                         </td>
-                        <td class="px-6 py-4 whitespace-nowrap text-sm font-bold ${getCVSSColor(vuln.cvss_score)}">${vuln.cvss_score}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm font-bold ${getCVSSColor(vuln.cvss_score)}">${vuln.cvss_score || 'N/A'}</td>
                         <td class="px-6 py-4 text-sm text-gray-500">${vuln.affected_service || 'N/A'}</td>
+                        <td class="px-6 py-4 whitespace-nowrap">
+                            ${falsePositiveBadge}
+                        </td>
                         <td class="px-6 py-4 whitespace-nowrap">
                             <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${getStatusColor(vuln.status)}">
                                 ${vuln.status || 'open'}
@@ -560,12 +788,25 @@
                 tbody.innerHTML = '';
 
                 if (data.vulnerabilities.length === 0) {
-                    tbody.innerHTML = '<tr><td colspan="7" class="px-6 py-4 text-center text-gray-500">Aucune vulnérabilité</td></tr>';
+                    tbody.innerHTML = '<tr><td colspan="8" class="px-6 py-4 text-center text-gray-500">Aucune vulnérabilité</td></tr>';
                     return;
                 }
 
                 data.vulnerabilities.forEach(vuln => {
+                    const isFalsePositive = vuln.is_false_positive === true || vuln.is_false_positive === 'true';
+                    const falsePositiveConfidence = vuln.false_positive_confidence || 0;
+                    const falsePositiveBadge = isFalsePositive 
+                        ? `<span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-purple-100 text-purple-800" title="Confiance: ${Math.round(falsePositiveConfidence * 100)}%">
+                            <i class="fas fa-question-circle mr-1"></i>Faux Positif (${Math.round(falsePositiveConfidence * 100)}%)
+                        </span>`
+                        : '<span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">Vrai Positif</span>';
+                    
                     const row = document.createElement('tr');
+                    // Style spécial pour les faux positifs (ligne en gris clair)
+                    if (isFalsePositive) {
+                        row.className = 'bg-gray-50 opacity-75';
+                    }
+                    
                     row.innerHTML = `
                         <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-blue-600">${vuln.vulnerability_id}</td>
                         <td class="px-6 py-4 text-sm text-gray-900">${vuln.name || 'N/A'}</td>
@@ -574,15 +815,18 @@
                                 ${vuln.severity}
                             </span>
                         </td>
-                        <td class="px-6 py-4 whitespace-nowrap text-sm font-bold ${getCVSSColor(vuln.cvss_score)}">${vuln.cvss_score}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm font-bold ${getCVSSColor(vuln.cvss_score)}">${vuln.cvss_score || 'N/A'}</td>
                         <td class="px-6 py-4 text-sm text-gray-500">${vuln.affected_service || 'N/A'}</td>
+                        <td class="px-6 py-4 whitespace-nowrap">
+                            ${falsePositiveBadge}
+                        </td>
                         <td class="px-6 py-4 whitespace-nowrap">
                             <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${getStatusColor(vuln.status)}">
                                 ${vuln.status || 'open'}
                             </span>
                         </td>
                         <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                            <button onclick="viewVulnDetails('${vuln.vulnerability_id}')" class="text-blue-600 hover:text-blue-900">
+                            <button onclick="viewVulnDetails('${vuln.vulnerability_id}', ${isFalsePositive}, ${falsePositiveConfidence}, '${(vuln.false_positive_reasoning || '').replace(/'/g, "\\'")}')" class="text-blue-600 hover:text-blue-900" title="Voir les détails">
                                 <i class="fas fa-eye"></i>
                             </button>
                         </td>
@@ -597,38 +841,83 @@
         // Liste scans
         async function loadScans() {
             try {
-                const response = await fetch(`${API_BASE}/scans?limit=50`);
+                // Utiliser l'API scan_api pour obtenir tous les scans
+                const response = await fetch(`${SCAN_API_BASE}/scans?limit=50`);
                 const data = await response.json();
 
                 const tbody = document.getElementById('scans-tbody');
                 tbody.innerHTML = '';
 
-                if (data.scans.length === 0) {
-                    tbody.innerHTML = '<tr><td colspan="7" class="px-6 py-4 text-center text-gray-500">Aucun scan</td></tr>';
+                if (!data.scans || data.scans.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="8" class="px-6 py-4 text-center text-gray-500">Aucun scan</td></tr>';
                     return;
                 }
 
                 data.scans.forEach(scan => {
                     const row = document.createElement('tr');
-                    const duration = scan.duration ? `${Math.round(scan.duration)}s` : 'N/A';
+                    const startedAt = scan.started_at ? new Date(scan.started_at).toLocaleString('fr-FR') : 'N/A';
+                    const canDownloadPDF = scan.status === 'completed';
+                    const isActive = scan.status === 'running' || scan.status === 'pending' || scan.progress < 100;
+                    
+                    // Actions disponibles
+                    let actions = '';
+                    if (isActive) {
+                        actions = `
+                            <button onclick="showScanProgress('${scan.scan_id}')" 
+                                    class="text-blue-600 hover:text-blue-900 mr-2" 
+                                    title="Voir la progression">
+                                <i class="fas fa-eye"></i>
+                            </button>
+                        `;
+                    } else if (canDownloadPDF) {
+                        actions = `
+                            <button onclick="downloadPDF('${scan.scan_id}')" 
+                                    class="text-red-600 hover:text-red-900" 
+                                    title="Télécharger le rapport PDF">
+                                <i class="fas fa-file-pdf"></i>
+                            </button>
+                        `;
+                    } else {
+                        actions = '-';
+                    }
+                    
                     row.innerHTML = `
                         <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-blue-600">${scan.scan_id.substring(0, 16)}...</td>
-                        <td class="px-6 py-4 text-sm text-gray-900">${scan.target}</td>
-                        <td class="px-6 py-4 text-sm text-gray-500">${scan.scan_type}</td>
+                        <td class="px-6 py-4 text-sm text-gray-900">${scan.target || 'N/A'}</td>
+                        <td class="px-6 py-4 text-sm text-gray-500">${scan.scan_type || 'N/A'}</td>
                         <td class="px-6 py-4 whitespace-nowrap">
                             <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${getStatusColor(scan.status)}">
-                                ${scan.status}
+                                ${scan.status || 'unknown'}
                             </span>
                         </td>
-                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">${scan.vulnerabilities_found || 0}</td>
-                        <td class="px-6 py-4 text-sm text-gray-500">${new Date(scan.started_at).toLocaleString('fr-FR')}</td>
-                        <td class="px-6 py-4 text-sm text-gray-500">${duration}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm">
+                            ${isActive ? `
+                                <div class="flex items-center">
+                                    <div class="w-16 bg-gray-200 rounded-full h-2 mr-2">
+                                        <div class="bg-blue-600 h-2 rounded-full" style="width: ${scan.progress || 0}%"></div>
+                                    </div>
+                                    <span class="text-xs text-gray-600">${scan.progress || 0}%</span>
+                                </div>
+                            ` : scan.vulnerabilities_found || 0}
+                        </td>
+                        <td class="px-6 py-4 text-sm text-gray-500">${startedAt}</td>
+                        <td class="px-6 py-4 text-sm text-gray-500">${scan.current_step || 'N/A'}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm">
+                            ${actions}
+                        </td>
                     `;
                     tbody.appendChild(row);
                 });
             } catch (error) {
                 console.error('Erreur chargement scans:', error);
+                const tbody = document.getElementById('scans-tbody');
+                tbody.innerHTML = `<tr><td colspan="8" class="px-6 py-4 text-center text-red-500">Erreur: ${error.message}</td></tr>`;
             }
+        }
+        
+        // Fonction pour revenir sur un scan en cours
+        function showScanProgress(scanId) {
+            showScanProgress(scanId);
         }
 
         // Liste scripts
@@ -691,13 +980,69 @@
 
         // Filtrer vulnérabilités
         function filterVulnerabilities() {
-            // TODO: Implémenter le filtrage
-            console.log('Filtrage à implémenter');
+            const severityFilter = document.getElementById('filter-severity').value;
+            const falsePositiveFilter = document.getElementById('filter-false-positive').value;
+            const searchTerm = document.getElementById('search-vulns').value.toLowerCase();
+            
+            const rows = document.querySelectorAll('#vulns-tbody tr');
+            
+            rows.forEach(row => {
+                let show = true;
+                
+                // Filtre par sévérité
+                if (severityFilter) {
+                    const severityCell = row.querySelector('td:nth-child(3) span');
+                    if (severityCell && !severityCell.textContent.includes(severityFilter)) {
+                        show = false;
+                    }
+                }
+                
+                // Filtre par faux positif
+                if (falsePositiveFilter) {
+                    const falsePositiveCell = row.querySelector('td:nth-child(6) span');
+                    if (falsePositiveCell) {
+                        const isFalsePositive = falsePositiveCell.textContent.includes('Faux Positif');
+                        if (falsePositiveFilter === 'false_positive' && !isFalsePositive) {
+                            show = false;
+                        } else if (falsePositiveFilter === 'true_positive' && isFalsePositive) {
+                            show = false;
+                        }
+                    }
+                }
+                
+                // Filtre par recherche
+                if (searchTerm) {
+                    const cveCell = row.querySelector('td:nth-child(1)');
+                    const nameCell = row.querySelector('td:nth-child(2)');
+                    const cveText = cveCell ? cveCell.textContent.toLowerCase() : '';
+                    const nameText = nameCell ? nameCell.textContent.toLowerCase() : '';
+                    if (!cveText.includes(searchTerm) && !nameText.includes(searchTerm)) {
+                        show = false;
+                    }
+                }
+                
+                row.style.display = show ? '' : 'none';
+            });
         }
 
         // Détails vulnérabilité
-        function viewVulnDetails(vulnId) {
-            alert(`Détails de ${vulnId} - Fonctionnalité à venir`);
+        function viewVulnDetails(vulnId, isFalsePositive = false, confidence = 0, reasoning = '') {
+            let message = `Détails de ${vulnId}\n\n`;
+            
+            if (isFalsePositive) {
+                message += `⚠️ FAUX POSITIF DÉTECTÉ\n`;
+                message += `Confiance: ${Math.round(confidence * 100)}%\n\n`;
+                if (reasoning) {
+                    message += `Raisonnement:\n${reasoning}\n\n`;
+                }
+                message += `Cette vulnérabilité a été identifiée comme un faux positif par l'IA.\n`;
+                message += `Il est recommandé de vérifier manuellement avant de prendre des mesures.`;
+            } else {
+                message += `✅ Vrai positif confirmé\n\n`;
+                message += `Cette vulnérabilité nécessite une action immédiate.`;
+            }
+            
+            alert(message);
         }
 
         // Fonctions utilitaires pour les couleurs
@@ -748,6 +1093,264 @@
                 'critical': 'bg-red-100 text-red-800'
             };
             return colors[risk] || 'bg-gray-100 text-gray-800';
+        }
+
+        // === FONCTIONS DE LANCEMENT DE SCAN ===
+
+        function openScanModal() {
+            document.getElementById('scan-modal').classList.remove('hidden');
+        }
+
+        function closeScanModal() {
+            document.getElementById('scan-modal').classList.add('hidden');
+            document.getElementById('scan-form').reset();
+        }
+
+        async function launchScan(event) {
+            event.preventDefault();
+            
+            const target = document.getElementById('target-ip').value;
+            const scanType = document.getElementById('scan-type').value;
+            const workflowType = document.getElementById('workflow-type').value;
+            const scriptType = document.getElementById('script-type').value;
+
+            // Validation basique
+            if (!target || target.trim() === '') {
+                alert('Veuillez entrer une adresse IP ou un domaine');
+                return;
+            }
+
+            try {
+                // Afficher un loader
+                const submitBtn = event.target.querySelector('button[type="submit"]');
+                const originalText = submitBtn.innerHTML;
+                submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Lancement...';
+                submitBtn.disabled = true;
+
+                // Lancer le scan
+                const response = await fetch(`${SCAN_API_BASE}/scans/launch`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        target: target.trim(),
+                        scan_type: scanType,
+                        workflow_type: workflowType,
+                        script_type: scriptType
+                    })
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    // Fermer le modal
+                    closeScanModal();
+                    
+                    // Afficher la page de progression
+                    showScanProgress(result.scan_id);
+                } else {
+                    alert('Erreur lors du lancement du scan: ' + (result.message || 'Erreur inconnue'));
+                    submitBtn.innerHTML = originalText;
+                    submitBtn.disabled = false;
+                }
+            } catch (error) {
+                console.error('Erreur lancement scan:', error);
+                alert('Erreur lors du lancement du scan: ' + error.message);
+                const submitBtn = event.target.querySelector('button[type="submit"]');
+                submitBtn.innerHTML = '<i class="fas fa-play mr-2"></i>Lancer le Scan';
+                submitBtn.disabled = false;
+            }
+        }
+
+        function showScanProgress(scanId) {
+            // Cacher toutes les vues
+            document.querySelectorAll('.view-container').forEach(v => v.classList.add('hidden'));
+            
+            // Afficher la vue de progression
+            document.getElementById('scan-progress-view').classList.remove('hidden');
+            
+            // Stocker le scan ID
+            currentScanId = scanId;
+            
+            // Connecter le WebSocket
+            connectWebSocket(scanId);
+        }
+
+        function connectWebSocket(scanId) {
+            // Fermer la connexion précédente si elle existe
+            if (currentWebSocket) {
+                currentWebSocket.close();
+            }
+
+            // Créer la connexion WebSocket
+            const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsHost = 'localhost:8001';
+            const wsUrl = `${wsProtocol}//${wsHost}/ws/scan/${scanId}`;
+            
+            currentWebSocket = new WebSocket(wsUrl);
+
+            currentWebSocket.onopen = () => {
+                console.log('WebSocket connecté pour scan', scanId);
+                // Envoyer un ping pour maintenir la connexion
+                setInterval(() => {
+                    if (currentWebSocket && currentWebSocket.readyState === WebSocket.OPEN) {
+                        currentWebSocket.send('ping');
+                    }
+                }, 30000); // Ping toutes les 30 secondes
+            };
+
+            currentWebSocket.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    
+                    if (data.type === 'progress_update') {
+                        updateProgressUI(data.data);
+                    }
+                } catch (error) {
+                    console.error('Erreur parsing WebSocket message:', error);
+                }
+            };
+
+            currentWebSocket.onerror = (error) => {
+                console.error('WebSocket erreur:', error);
+                document.getElementById('status-message').textContent = 'Erreur de connexion au serveur';
+            };
+
+            currentWebSocket.onclose = () => {
+                console.log('WebSocket fermé');
+                // Si le scan n'est pas terminé, essayer de se reconnecter
+                if (scanId === currentScanId) {
+                    setTimeout(() => {
+                        if (scanId === currentScanId) {
+                            connectWebSocket(scanId);
+                        }
+                    }, 3000);
+                }
+            };
+        }
+
+        function updateProgressUI(status) {
+            // Mettre à jour la barre de progression
+            const progress = status.progress || 0;
+            document.getElementById('progress-percentage').textContent = progress + '%';
+            document.getElementById('progress-fill').style.width = progress + '%';
+            
+            // Mettre à jour l'étape actuelle
+            document.getElementById('progress-step').textContent = status.current_step || 'En cours...';
+            
+            // Mettre à jour le message
+            document.getElementById('status-message').textContent = status.message || 'Scan en cours...';
+            
+            // Mettre à jour le temps restant
+            const timeRemaining = status.estimated_time_remaining || 0;
+            const minutes = Math.floor(timeRemaining / 60);
+            const seconds = timeRemaining % 60;
+            document.getElementById('time-remaining').textContent = 
+                `${minutes}:${seconds.toString().padStart(2, '0')}`;
+            
+            // Mettre à jour les icônes des étapes
+            updateStepIcons(status.current_step, progress);
+            
+            // Si terminé, afficher le rapport après 2 secondes
+            if (status.status === 'completed') {
+                setTimeout(() => {
+                    showScanReport(status.scan_id);
+                }, 2000);
+            } else if (status.status === 'failed') {
+                document.getElementById('status-message').classList.add('text-red-600');
+                document.getElementById('status-message').textContent = 'Erreur: ' + (status.message || 'Échec du scan');
+            }
+        }
+
+        function updateStepIcons(currentStep, progress) {
+            // Réinitialiser toutes les icônes
+            document.querySelectorAll('.step-item i').forEach(icon => {
+                icon.className = 'fas fa-circle text-gray-300 mr-3';
+            });
+
+            // Marquer les étapes terminées
+            if (progress >= 10) {
+                document.querySelector('#step-init i').className = 'fas fa-check-circle text-green-500 mr-3';
+            }
+            if (progress >= 40) {
+                document.querySelector('#step-scan i').className = 'fas fa-check-circle text-green-500 mr-3';
+            }
+            if (progress >= 70) {
+                document.querySelector('#step-analysis i').className = 'fas fa-check-circle text-green-500 mr-3';
+            }
+            if (progress >= 90) {
+                document.querySelector('#step-scripts i').className = 'fas fa-check-circle text-green-500 mr-3';
+            }
+            if (progress === 100) {
+                document.querySelector('#step-complete i').className = 'fas fa-check-circle text-green-500 mr-3';
+            }
+
+            // Marquer l'étape en cours avec spinner
+            if (currentStep === 'Initialisation' && progress < 10) {
+                document.querySelector('#step-init i').className = 'fas fa-spinner fa-spin text-blue-500 mr-3';
+            } else if (currentStep === 'Scan Nmap' && progress < 40) {
+                document.querySelector('#step-scan i').className = 'fas fa-spinner fa-spin text-blue-500 mr-3';
+            } else if (currentStep === 'Analyse IA' && progress < 70) {
+                document.querySelector('#step-analysis i').className = 'fas fa-spinner fa-spin text-blue-500 mr-3';
+            } else if (currentStep === 'Génération Scripts' && progress < 90) {
+                document.querySelector('#step-scripts i').className = 'fas fa-spinner fa-spin text-blue-500 mr-3';
+            } else if (currentStep === 'Finalisation' && progress < 100) {
+                document.querySelector('#step-complete i').className = 'fas fa-spinner fa-spin text-blue-500 mr-3';
+            }
+        }
+
+        async function showScanReport(scanId) {
+            // Fermer le WebSocket
+            if (currentWebSocket) {
+                currentWebSocket.close();
+                currentWebSocket = null;
+            }
+
+            // Afficher un message de succès
+            alert('Scan terminé avec succès ! Redirection vers les résultats...');
+            
+            // Recharger les scans et afficher la vue scans
+            await loadScans();
+            showView('scans');
+            
+            // Optionnel: télécharger automatiquement le PDF
+            // downloadPDF(scanId);
+        }
+
+        async function downloadPDF(scanId) {
+            try {
+                // Afficher un loader
+                const loader = document.createElement('div');
+                loader.className = 'fixed inset-0 bg-gray-600 bg-opacity-50 z-50 flex items-center justify-center';
+                loader.innerHTML = '<div class="bg-white p-6 rounded-lg"><i class="fas fa-spinner fa-spin mr-2"></i>Génération du PDF...</div>';
+                document.body.appendChild(loader);
+
+                const response = await fetch(`${SCAN_API_BASE}/scans/${scanId}/pdf`);
+                
+                if (!response.ok) {
+                    throw new Error('Erreur génération PDF');
+                }
+
+                const blob = await response.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `rapport_${scanId}.pdf`;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                window.URL.revokeObjectURL(url);
+
+                // Retirer le loader
+                document.body.removeChild(loader);
+                
+                // Notification de succès
+                alert('PDF téléchargé avec succès !');
+            } catch (error) {
+                console.error('Erreur téléchargement PDF:', error);
+                alert('Erreur lors du téléchargement du PDF: ' + error.message);
+            }
         }
     </script>
 </body>

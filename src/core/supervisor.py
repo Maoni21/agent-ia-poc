@@ -27,7 +27,16 @@ from src.database.database import Database
 from .collector import Collector, ScanResult
 from .analyzer import Analyzer, AnalysisResult
 from .generator import Generator, ScriptResult
+from .ansible_generator import AnsibleGenerator, AnsiblePlaybookResult
 from .exceptions import SupervisorException, CoreErrorCodes, ERROR_MESSAGES, TASK_STATUS, OPERATION_TYPES
+
+# Import optionnel pour les notifications
+try:
+    from src.integrations.notifications import NotificationManager, NotificationPriority
+    NOTIFICATIONS_AVAILABLE = True
+except ImportError:
+    NOTIFICATIONS_AVAILABLE = False
+    logger.warning("Notifications non disponibles (aiohttp requis)")
 
 logger = setup_logger(__name__)
 
@@ -153,6 +162,8 @@ class Supervisor:
         self.collector: Optional[Collector] = None
         self.analyzer: Optional[Analyzer] = None
         self.generator: Optional[Generator] = None
+        self.ansible_generator: Optional[AnsibleGenerator] = None
+        self.notification_manager: Optional[Any] = None
         self.db = Database()
         self.active_workflows: Dict[str, WorkflowDefinition] = {}
         self.active_tasks: Dict[str, TaskInfo] = {}
@@ -182,6 +193,17 @@ class Supervisor:
             logger.info("✅ Analyzer initialisé")
             self.generator = Generator(self.config)
             logger.info("✅ Generator initialisé")
+            self.ansible_generator = AnsibleGenerator(self.config)
+            logger.info("✅ AnsibleGenerator initialisé")
+            
+            # Initialiser les notifications si disponibles
+            if NOTIFICATIONS_AVAILABLE:
+                try:
+                    self.notification_manager = NotificationManager(self.config)
+                    logger.info("✅ NotificationManager initialisé")
+                except Exception as e:
+                    logger.warning(f"⚠️ NotificationManager non disponible: {e}")
+            
             self.is_ready = True
             logger.info("🚀 Supervisor initialisé avec succès")
         except Exception as e:
@@ -313,11 +335,33 @@ class Supervisor:
             self._update_workflow_stats(True, workflow_result.duration)
             await self._call_completion_callbacks(workflow_id, workflow_result)
 
+            # Notifier la fin du workflow
+            if self.notification_manager:
+                try:
+                    await self.notification_manager.notify_scan_completed(
+                        workflow_id,
+                        {
+                            "total_vulnerabilities": workflow_result.total_vulnerabilities,
+                            "critical_vulnerabilities": workflow_result.critical_vulnerabilities,
+                            "scripts_generated": workflow_result.scripts_generated
+                        }
+                    )
+                except Exception as e:
+                    logger.warning(f"Erreur notification scan complété: {e}")
+
             logger.info(f"✅ Workflow terminé: {workflow_id}")
         except Exception as e:
             logger.error(f"❌ Erreur workflow {workflow_id}: {e}")
             workflow_def.status = WorkflowStatus.FAILED
             self._update_workflow_stats(False, (datetime.utcnow() - start_time).total_seconds())
+            
+            # Notifier l'échec
+            if self.notification_manager:
+                try:
+                    await self.notification_manager.notify_scan_failed(workflow_id, str(e))
+                except Exception as notif_error:
+                    logger.warning(f"Erreur notification échec: {notif_error}")
+            
             await self._cleanup_workflow_tasks(workflow_id)
 
     async def _execute_task(self, workflow_id: str, task_name: str, workflow_def: WorkflowDefinition,
@@ -410,6 +454,21 @@ class Supervisor:
 
         workflow_result.total_vulnerabilities = len(vulnerabilities_data)
         workflow_result.critical_vulnerabilities = len([v for v in result.vulnerabilities if v.severity == "CRITICAL"])
+        
+        # Notifier les vulnérabilités critiques
+        if self.notification_manager:
+            try:
+                critical_vulns = [v for v in result.vulnerabilities if v.severity == "CRITICAL" or (v.cvss_score and v.cvss_score >= 9.0)]
+                for vuln in critical_vulns:
+                    await self.notification_manager.notify_critical_vulnerability(
+                        vuln.to_dict(),
+                        workflow_def.workflow_id
+                    )
+                    # Petite pause entre les notifications
+                    await asyncio.sleep(1)
+            except Exception as e:
+                logger.warning(f"Erreur notification vulnérabilités critiques: {e}")
+        
         task_info.progress = 100
         return result
 
@@ -430,6 +489,7 @@ class Supervisor:
 
         target_system = workflow_def.parameters.get('target_system', 'ubuntu')
         risk_tolerance = workflow_def.parameters.get('risk_tolerance', 'low')
+        script_type = workflow_def.parameters.get('script_type', 'bash')  # bash ou ansible
         max_scripts = self.config.get('max_scripts_to_generate', 5)
 
         severity_order = {'CRITICAL': 0, 'HIGH': 1, 'MEDIUM': 2, 'LOW': 3, 'UNKNOWN': 4}
@@ -439,17 +499,47 @@ class Supervisor:
         ))
         vulnerabilities_to_process = sorted_vulnerabilities[:max_scripts]
 
-        logger.info(f"Génération de {len(vulnerabilities_to_process)} scripts")
+        logger.info(f"Génération de {len(vulnerabilities_to_process)} {'playbooks' if script_type == 'ansible' else 'scripts'} ({script_type})")
         script_results = []
 
         for i, vulnerability in enumerate(vulnerabilities_to_process):
             try:
                 vuln_details = vulnerability.to_dict() if hasattr(vulnerability, 'to_dict') else vulnerability
-                script_result = await self.generator.generate_fix_script(
-                    vulnerability_id=vuln_details.get('vulnerability_id', f'vuln_{i}'),
-                    vulnerability_details=vuln_details, target_system=target_system,
-                    risk_tolerance=risk_tolerance
-                )
+                
+                if script_type == 'ansible' and self.ansible_generator:
+                    # Générer un playbook Ansible
+                    playbook_result = await self.ansible_generator.generate_playbook(
+                        vulnerability_id=vuln_details.get('vulnerability_id', f'vuln_{i}'),
+                        vulnerability_details=vuln_details,
+                        target_system=target_system,
+                        risk_tolerance=risk_tolerance
+                    )
+                    # Convertir AnsiblePlaybookResult en ScriptResult pour compatibilité
+                    script_result = ScriptResult(
+                        script_id=playbook_result.playbook_id,
+                        vulnerability_id=playbook_result.vulnerability_id,
+                        target_system=playbook_result.target_system,
+                        script_type='ansible',
+                        fix_script=playbook_result.playbook_yaml,
+                        rollback_script=playbook_result.rollback_playbook,
+                        validation_status=playbook_result.validation_status,
+                        risk_level=playbook_result.risk_level,
+                        estimated_execution_time=playbook_result.estimated_execution_time,
+                        warnings=playbook_result.warnings,
+                        prerequisites=playbook_result.prerequisites,
+                        generated_at=playbook_result.generated_at,
+                        ai_model_used=playbook_result.ai_model_used,
+                        confidence_score=playbook_result.confidence_score
+                    )
+                else:
+                    # Générer un script bash (par défaut)
+                    script_result = await self.generator.generate_fix_script(
+                        vulnerability_id=vuln_details.get('vulnerability_id', f'vuln_{i}'),
+                        vulnerability_details=vuln_details,
+                        target_system=target_system,
+                        risk_tolerance=risk_tolerance
+                    )
+                
                 script_results.append(script_result)
 
                 if i < len(vulnerabilities_to_process) - 1:
@@ -459,7 +549,7 @@ class Supervisor:
                 task_info.progress = progress
                 self._call_progress_callbacks(workflow_def.workflow_id, "generate_scripts", progress)
             except Exception as e:
-                logger.warning(f"Erreur génération script {i}: {e}")
+                logger.warning(f"Erreur génération {'playbook' if script_type == 'ansible' else 'script'} {i}: {e}")
                 continue
 
         workflow_result.scripts_generated = len(script_results)

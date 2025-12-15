@@ -12,6 +12,21 @@ from datetime import datetime, timedelta
 import json
 from pathlib import Path
 import sqlite3
+import sys
+from pathlib import Path
+
+# Ajouter le chemin racine pour les imports
+root_path = Path(__file__).parent.parent.parent
+sys.path.insert(0, str(root_path))
+
+# Import de sync_workflows - fonction définie localement pour éviter les problèmes d'import
+def sync_all_workflows(workflows_dir, db_path):
+    """Synchronise les workflows vers la DB (fonction simplifiée)"""
+    try:
+        from src.web.sync_workflows import sync_all_workflows as _sync
+        return _sync(workflows_dir, db_path)
+    except:
+        return 0
 
 app = FastAPI(
     title="CyberSec AI Dashboard API",
@@ -29,8 +44,10 @@ app.add_middleware(
 )
 
 # Configuration des chemins
-BASE_DIR = Path(__file__).parent
-DATA_DIR = BASE_DIR / "data"
+BASE_DIR = Path(__file__).parent  # src/web
+STATIC_DIR = BASE_DIR / "static"
+ROOT_DIR = BASE_DIR.parent.parent  # Racine du projet
+DATA_DIR = ROOT_DIR / "data"
 DB_PATH = DATA_DIR / "database" / "vulnerability_agent.db"
 WORKFLOWS_DIR = DATA_DIR / "workflow_results"
 
@@ -55,10 +72,24 @@ def load_workflow_result(workflow_id: str):
 
 # ===== ENDPOINTS API =====
 
+@app.on_event("startup")
+async def startup_event():
+    """Synchronise les workflows au démarrage"""
+    try:
+        # Créer les répertoires si nécessaire
+        WORKFLOWS_DIR.mkdir(parents=True, exist_ok=True)
+        DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+        
+        synced = sync_all_workflows(WORKFLOWS_DIR, DB_PATH)
+        print(f"✅ {synced} workflows synchronisés vers la base de données")
+    except Exception as e:
+        print(f"⚠️ Erreur synchronisation workflows: {e}")
+
+
 @app.get("/")
 async def root():
     """Page d'accueil - redirige vers le dashboard"""
-    return FileResponse(BASE_DIR / "static" / "dashboard.html")
+    return FileResponse(STATIC_DIR / "dashboard.html")
 
 
 @app.get("/api/health")
@@ -79,30 +110,80 @@ async def get_overview_stats():
         conn = get_db_connection()
         cursor = conn.cursor()
 
-        # Total des scans
-        total_scans = cursor.execute("SELECT COUNT(*) FROM scans").fetchone()[0]
-
-        # Scans récents (30 derniers jours)
-        thirty_days_ago = (datetime.now() - timedelta(days=30)).isoformat()
-        recent_scans = cursor.execute(
-            "SELECT COUNT(*) FROM scans WHERE started_at > ?",
-            (thirty_days_ago,)
-        ).fetchone()[0]
-
-        # Total vulnérabilités
-        total_vulns = cursor.execute("SELECT COUNT(*) FROM vulnerabilities").fetchone()[0]
-
-        # Vulnérabilités critiques non résolues
-        critical_vulns = cursor.execute(
-            "SELECT COUNT(*) FROM vulnerabilities WHERE severity IN ('CRITICAL', 'HIGH') AND status != 'resolved'"
-        ).fetchone()[0]
-
-        # Scripts générés
-        total_scripts = cursor.execute("SELECT COUNT(*) FROM remediation_scripts").fetchone()[0]
-
-        # Moyenne CVSS
-        avg_cvss = cursor.execute("SELECT AVG(cvss_score) FROM vulnerabilities").fetchone()[0] or 0.0
-
+        # Charger depuis les workflows JSON (source principale)
+        total_scans = 0
+        recent_scans = 0
+        all_vulns = set()
+        critical_vulns = 0
+        cvss_scores = []
+        all_scripts = set()
+        
+        if WORKFLOWS_DIR.exists():
+            workflow_files = list(WORKFLOWS_DIR.glob("*.json"))
+            total_scans = len(workflow_files)
+            thirty_days_ago = datetime.now().timestamp() - 30*24*3600
+            recent_scans = len([f for f in workflow_files if f.stat().st_mtime > thirty_days_ago])
+            
+            for workflow_file in workflow_files:
+                try:
+                    with open(workflow_file, 'r', encoding='utf-8') as f:
+                        workflow_data = json.load(f)
+                        
+                        # Vulnérabilités
+                        analysis_result = workflow_data.get("analysis_result")
+                        if analysis_result:
+                            vulns = analysis_result.get("vulnerabilities", [])
+                            for vuln in vulns:
+                                vuln_dict = vuln if isinstance(vuln, dict) else vuln.to_dict() if hasattr(vuln, 'to_dict') else {}
+                                vuln_id = vuln_dict.get("vulnerability_id")
+                                if vuln_id:
+                                    all_vulns.add(vuln_id)
+                                    if vuln_dict.get("severity") == "CRITICAL":
+                                        critical_vulns += 1
+                                    cvss = vuln_dict.get("cvss_score")
+                                    if cvss:
+                                        cvss_scores.append(float(cvss))
+                        
+                        # Scripts
+                        script_results = workflow_data.get("script_results", [])
+                        for script in script_results:
+                            script_dict = script if isinstance(script, dict) else script.to_dict() if hasattr(script, 'to_dict') else {}
+                            script_id = script_dict.get("script_id")
+                            if script_id:
+                                all_scripts.add(script_id)
+                except Exception as e:
+                    print(f"⚠️ Erreur lecture workflow {workflow_file}: {e}")
+                    continue
+        
+        # Compléter avec la base de données si disponible
+        try:
+            db_scans = cursor.execute("SELECT COUNT(*) FROM scans").fetchone()[0]
+            total_scans += db_scans
+            db_vulns = cursor.execute("SELECT COUNT(*) FROM vulnerabilities").fetchone()[0]
+            total_vulns_db = db_vulns
+            db_critical = cursor.execute("SELECT COUNT(*) FROM vulnerabilities WHERE severity = 'CRITICAL'").fetchone()[0]
+            critical_vulns += db_critical
+            db_scripts = cursor.execute("SELECT COUNT(*) FROM scripts").fetchone()[0]
+            total_scripts_db = db_scripts
+        except:
+            total_vulns_db = 0
+            total_scripts_db = 0
+        
+        total_vulns = len(all_vulns) + total_vulns_db
+        total_scripts = len(all_scripts) + total_scripts_db
+        
+        # Calculer la moyenne CVSS
+        avg_cvss = 0.0
+        if cvss_scores:
+            avg_cvss = sum(cvss_scores) / len(cvss_scores)
+        else:
+            try:
+                db_avg = cursor.execute("SELECT AVG(cvss_score) FROM vulnerabilities").fetchone()[0]
+                if db_avg:
+                    avg_cvss = db_avg
+            except:
+                pass
+        
         conn.close()
 
         return {
@@ -280,37 +361,86 @@ async def get_vulnerabilities(
         status: Optional[str] = None,
         search: Optional[str] = None
 ):
-    """Liste des vulnérabilités avec filtres"""
+    """Liste des vulnérabilités avec filtres - Charge depuis DB et workflows"""
 
     try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
+        vulnerabilities_list = []
+        
+        # D'abord essayer la base de données
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
 
-        query = "SELECT * FROM vulnerabilities WHERE 1=1"
-        params = []
+            query = "SELECT * FROM vulnerabilities WHERE 1=1"
+            params = []
 
-        if severity:
-            query += " AND severity = ?"
-            params.append(severity)
+            if severity:
+                query += " AND severity = ?"
+                params.append(severity)
 
-        if status:
-            query += " AND status = ?"
-            params.append(status)
+            if status:
+                query += " AND status = ?"
+                params.append(status)
 
-        if search:
-            query += " AND (vulnerability_id LIKE ? OR name LIKE ?)"
-            params.extend([f"%{search}%", f"%{search}%"])
+            if search:
+                query += " AND (vulnerability_id LIKE ? OR name LIKE ?)"
+                params.extend([f"%{search}%", f"%{search}%"])
 
-        query += " ORDER BY cvss_score DESC, discovered_at DESC LIMIT ?"
-        params.append(limit)
+            query += " ORDER BY cvss_score DESC LIMIT ?"
+            params.append(limit)
 
-        vulnerabilities = cursor.execute(query, params).fetchall()
-
-        conn.close()
-
+            db_vulns = cursor.execute(query, params).fetchall()
+            vulnerabilities_list.extend([dict(vuln) for vuln in db_vulns])
+            conn.close()
+        except Exception as e:
+            print(f"⚠️ Erreur lecture DB: {e}")
+        
+        # Ensuite charger depuis les workflows JSON
+        if WORKFLOWS_DIR.exists():
+            for workflow_file in WORKFLOWS_DIR.glob("*.json"):
+                try:
+                    with open(workflow_file, 'r', encoding='utf-8') as f:
+                        workflow_data = json.load(f)
+                        analysis_result = workflow_data.get("analysis_result")
+                        if analysis_result:
+                            vulns = analysis_result.get("vulnerabilities", [])
+                            for vuln in vulns:
+                                vuln_dict = vuln if isinstance(vuln, dict) else vuln.to_dict() if hasattr(vuln, 'to_dict') else {}
+                                
+                                # Vérifier les filtres
+                                if severity and vuln_dict.get("severity") != severity:
+                                    continue
+                                if search and search.lower() not in str(vuln_dict.get("vulnerability_id", "")).lower() and search.lower() not in str(vuln_dict.get("name", "")).lower():
+                                    continue
+                                
+                                # Normaliser le format
+                                normalized_vuln = {
+                                    "vulnerability_id": vuln_dict.get("vulnerability_id", ""),
+                                    "name": vuln_dict.get("name", ""),
+                                    "severity": vuln_dict.get("severity", "MEDIUM"),
+                                    "cvss_score": vuln_dict.get("cvss_score"),
+                                    "description": vuln_dict.get("description", ""),
+                                    "affected_service": vuln_dict.get("affected_service", ""),
+                                    "affected_port": vuln_dict.get("affected_port"),
+                                    "status": "open",
+                                    "is_false_positive": vuln_dict.get("is_false_positive", False),
+                                    "false_positive_confidence": vuln_dict.get("false_positive_confidence"),
+                                    "false_positive_reasoning": vuln_dict.get("false_positive_reasoning")
+                                }
+                                
+                                # Éviter les doublons
+                                if not any(v.get("vulnerability_id") == normalized_vuln["vulnerability_id"] for v in vulnerabilities_list):
+                                    vulnerabilities_list.append(normalized_vuln)
+                except Exception as e:
+                    print(f"⚠️ Erreur lecture workflow {workflow_file}: {e}")
+                    continue
+        
+        # Trier par CVSS score
+        vulnerabilities_list.sort(key=lambda x: x.get("cvss_score", 0) or 0, reverse=True)
+        
         return {
-            "vulnerabilities": [dict(vuln) for vuln in vulnerabilities],
-            "count": len(vulnerabilities)
+            "vulnerabilities": vulnerabilities_list[:limit],
+            "count": len(vulnerabilities_list)
         }
 
     except Exception as e:
@@ -357,29 +487,66 @@ async def get_scripts(
         limit: int = 50,
         status: Optional[str] = None
 ):
-    """Liste des scripts de remédiation"""
+    """Liste des scripts de remédiation - Charge depuis DB et workflows"""
 
     try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
+        scripts_list = []
+        
+        # D'abord essayer la base de données
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
 
-        query = "SELECT * FROM remediation_scripts"
-        params = []
+            query = "SELECT * FROM scripts"
+            params = []
 
-        if status:
-            query += " WHERE validation_status = ?"
-            params.append(status)
+            if status:
+                query += " WHERE validation_status = ?"
+                params.append(status)
 
-        query += " ORDER BY generated_at DESC LIMIT ?"
-        params.append(limit)
+            query += " ORDER BY created_at DESC LIMIT ?"
+            params.append(limit)
 
-        scripts = cursor.execute(query, params).fetchall()
-
-        conn.close()
-
+            db_scripts = cursor.execute(query, params).fetchall()
+            scripts_list.extend([dict(script) for script in db_scripts])
+            conn.close()
+        except Exception as e:
+            print(f"⚠️ Erreur lecture DB scripts: {e}")
+        
+        # Ensuite charger depuis les workflows JSON
+        if WORKFLOWS_DIR.exists():
+            for workflow_file in WORKFLOWS_DIR.glob("*.json"):
+                try:
+                    with open(workflow_file, 'r', encoding='utf-8') as f:
+                        workflow_data = json.load(f)
+                        script_results = workflow_data.get("script_results", [])
+                        for script in script_results:
+                            script_dict = script if isinstance(script, dict) else script.to_dict() if hasattr(script, 'to_dict') else {}
+                            
+                            # Normaliser le format
+                            normalized_script = {
+                                "script_id": script_dict.get("script_id", ""),
+                                "vulnerability_id": script_dict.get("vulnerability_id", ""),
+                                "target_system": script_dict.get("target_system", "ubuntu"),
+                                "script_type": script_dict.get("script_type", "bash"),
+                                "script_content": script_dict.get("script_content", ""),
+                                "rollback_script": script_dict.get("rollback_script", ""),
+                                "ai_model_used": script_dict.get("ai_model_used", ""),
+                                "validation_status": "pending",
+                                "risk_level": "medium",
+                                "generated_at": workflow_data.get("completed_at", workflow_data.get("started_at"))
+                            }
+                            
+                            # Éviter les doublons
+                            if not any(s.get("script_id") == normalized_script["script_id"] for s in scripts_list):
+                                scripts_list.append(normalized_script)
+                except Exception as e:
+                    print(f"⚠️ Erreur lecture workflow {workflow_file}: {e}")
+                    continue
+        
         return {
-            "scripts": [dict(script) for script in scripts],
-            "count": len(scripts)
+            "scripts": scripts_list[:limit],
+            "count": len(scripts_list)
         }
 
     except Exception as e:
