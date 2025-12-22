@@ -1,3 +1,42 @@
+## Agent IA de Cybersécurité — Explication simple (pour tout le monde)
+
+### À quoi sert l’application ?
+
+Elle aide à **repérer** des problèmes de sécurité sur un système (serveur, machine, réseau), puis à **expliquer** ces problèmes et à **proposer des actions de correction**.
+
+### Comment ça marche (en clair) ?
+
+1. **On observe le système** : l’outil regarde quels services sont accessibles (ex. web, SSH) et ce qui semble exposé.
+2. **On identifie des vulnérabilités potentielles** : certaines signatures indiquent qu’un service peut être concerné par une faille connue.
+3. **On vérifie sur une source officielle (NIST/NVD)** : si une faille est liée à un identifiant officiel (un “CVE”), l’application va chercher les informations dans la base NVD du **NIST** : niveau de gravité, score CVSS, description et références.  
+   - Objectif : ne pas se baser uniquement sur une détection “automatique”, mais recouper avec une **référence publique reconnue**.
+4. **On utilise l’IA pour rendre le résultat compréhensible et actionnable** : des modèles avancés (comme **GPT‑4** ou **Claude**) servent à :
+   - reformuler l’impact en termes clairs,
+   - proposer des étapes de correction,
+   - aider à prioriser (quoi corriger en premier).
+
+### Pourquoi l’IA est un “atout” ici ?
+
+- Elle **structure** des résultats souvent techniques (logs, sorties d’outils) en un plan d’action lisible.
+- Elle **accélère** l’analyse et la rédaction des recommandations.
+- Elle peut aussi aider à **repérer des faux positifs** (cas où une alerte semble vraie mais ne l’est probablement pas), en s’appuyant sur le contexte (versions, bannières, cohérence).
+
+### Est‑ce que c’est sûr ?
+
+L’application ajoute des garde‑fous :
+
+- **Validation des entrées** (pour éviter des injections / abus).
+- **Contrôles de sécurité sur les scripts** proposés (détection de commandes dangereuses, vérification de syntaxe).
+- **Mode sandbox / tests** : le script peut être vérifié “à blanc” avant toute exécution.
+
+### Ce qu’il faut retenir
+
+- **NIST/NVD** apporte la **référence officielle** (scores, sévérité, liens).
+- **GPT‑4 / Claude** apportent la **mise en forme intelligente** : explications + priorisation + pistes de correction.
+- Le résultat est pensé pour être **compréhensible**, mais la mise en production de correctifs doit rester **contrôlée** (revue, tests).
+
+---
+
 ## Agent IA de Cybersécurité — Détails techniques
 
 Cette application implémente un **pipeline automatisé** de cybersécurité (scan → enrichissement → analyse IA → priorisation → génération de remédiations) avec un objectif clair : **produire des résultats exploitables** tout en conservant une **traçabilité** et une **validation sur sources officielles**.
