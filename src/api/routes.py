@@ -137,99 +137,6 @@ async def start_scan(
         )
 
 
-@router.get("/scan/{scan_id}/results")
-async def get_scan_results(scan_id: str):
-    """
-    Récupère les résultats d'un scan
-
-    Args:
-        scan_id: ID du scan
-
-    Returns:
-        Résultats du scan
-    """
-    try:
-        # 1. Vérifier dans active_tasks
-        if scan_id in active_tasks:
-            task_data = active_tasks[scan_id]
-
-            if task_data["status"] == "running":
-                return {
-                    "success": True,
-                    "scan_id": scan_id,
-                    "status": "running",
-                    "progress": task_data.get("progress", 0),
-                    "message": "Scan en cours..."
-                }
-
-            elif task_data["status"] == "completed":
-                # Récupérer les résultats depuis les fichiers workflow
-                workflow_id = task_data.get("workflow_id")
-                if workflow_id:
-                    results_dir = Path("data/workflow_results")
-                    result_file = results_dir / f"{workflow_id}.json"
-
-                    if result_file.exists():
-                        with open(result_file, 'r', encoding='utf-8') as f:
-                            workflow_data = json.load(f)
-
-                        return {
-                            "success": True,
-                            "scan_id": scan_id,
-                            "status": "completed",
-                            "results": workflow_data
-                        }
-
-                # Fallback: retourner les résultats depuis active_tasks
-                return {
-                    "success": True,
-                    "scan_id": scan_id,
-                    "status": "completed",
-                    "results": task_data.get("results", {})
-                }
-
-            elif task_data["status"] == "failed":
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"Scan échoué: {task_data.get('error', 'Erreur inconnue')}"
-                )
-
-        # 2. Vérifier dans les fichiers workflow
-        results_dir = Path("data/workflow_results")
-        if results_dir.exists():
-            # Chercher un fichier contenant le scan_id
-            for result_file in results_dir.glob("*.json"):
-                try:
-                    with open(result_file, 'r', encoding='utf-8') as f:
-                        workflow_data = json.load(f)
-
-                    # Vérifier si c'est le bon scan
-                    if workflow_data.get("scan_result", {}).get("scan_id") == scan_id:
-                        return {
-                            "success": True,
-                            "scan_id": scan_id,
-                            "status": "completed",
-                            "results": workflow_data
-                        }
-                except Exception as e:
-                    logger.warning(f"Erreur lecture {result_file}: {e}")
-                    continue
-
-        # 3. Scan non trouvé
-        raise HTTPException(
-            status_code=404,
-            detail="Scan non trouvé ou résultats non disponibles"
-        )
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Erreur récupération résultats: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Erreur interne: {str(e)}"
-        )
-
 @router.get("/scan/{scan_id}/results", response_model=Dict[str, Any], tags=["scans"])
 async def get_scan_results(
         scan_id: str,
@@ -247,42 +154,77 @@ async def get_scan_results(
     Returns:
         Dict: Résultats détaillés du scan
     """
-    if scan_id not in active_tasks:
-        raise HTTPException(
-            status_code=404,
-            detail={
-                "code": APIErrorCodes.SCAN_NOT_FOUND,
-                "message": ERROR_MESSAGES[APIErrorCodes.SCAN_NOT_FOUND]
+    # 1. Vérifier dans active_tasks (mémoire)
+    task = active_tasks.get(scan_id)
+
+    if task:
+        status = task.get("status")
+
+        if status == "running":
+            return {
+                "scan_id": scan_id,
+                "status": "running",
+                "progress": task.get("progress", 0),
+                "message": "Scan en cours..."
             }
-        )
 
-    task = active_tasks[scan_id]
+        if status == "completed":
+            results = task.get("results")
 
-    if task.get("status") != "completed":
-        raise HTTPException(
-            status_code=409,
-            detail="Scan non terminé"
-        )
+            # Vérifier que les résultats existent
+            if results is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Scan terminé mais résultats non disponibles"
+                )
 
-    # Récupérer les résultats
-    results = task.get("results")
+            return {
+                "scan_id": scan_id,
+                "target": task.get("target"),
+                "completed_at": task.get("completed_at"),
+                "summary": results.get("summary", {}),
+                "vulnerabilities": results.get("vulnerabilities", []),
+                "services": results.get("services", []),
+                "open_ports": results.get("open_ports", []),
+            }
 
-    # Vérifier que les résultats existent
-    if results is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Scan terminé mais résultats non disponibles"
-        )
+        if status == "failed":
+            raise HTTPException(
+                status_code=500,
+                detail=f"Scan échoué: {task.get('error', 'Erreur inconnue')}"
+            )
 
-    return {
-        "scan_id": scan_id,
-        "target": task.get("target"),
-        "completed_at": task.get("completed_at"),
-        "summary": results.get("summary", {}),
-        "vulnerabilities": results.get("vulnerabilities", []),
-        "services": results.get("services", []),
-        "open_ports": results.get("open_ports", []),
-    }
+    # 2. Fallback : tenter de retrouver les résultats dans les fichiers workflow
+    results_dir = Path("data/workflow_results")
+    if results_dir.exists():
+        for result_file in results_dir.glob("*.json"):
+            try:
+                with open(result_file, 'r', encoding='utf-8') as f:
+                    workflow_data = json.load(f)
+
+                scan_result = workflow_data.get("scan_result", {})
+                if scan_result.get("scan_id") == scan_id:
+                    return {
+                        "scan_id": scan_id,
+                        "target": scan_result.get("target"),
+                        "completed_at": workflow_data.get("completed_at"),
+                        "summary": scan_result.get("summary", {}),
+                        "vulnerabilities": scan_result.get("vulnerabilities", []),
+                        "services": scan_result.get("services", []),
+                        "open_ports": scan_result.get("open_ports", []),
+                    }
+            except Exception as e:
+                logger.warning(f"Erreur lecture {result_file}: {e}")
+                continue
+
+    # 3. Scan non trouvé
+    raise HTTPException(
+        status_code=404,
+        detail={
+            "code": APIErrorCodes.SCAN_NOT_FOUND,
+            "message": ERROR_MESSAGES[APIErrorCodes.SCAN_NOT_FOUND]
+        }
+    )
 
 @router.get("/scans", response_model=List[Dict[str, Any]], tags=["scans"])
 async def list_scans(
@@ -394,13 +336,19 @@ async def analyze_vulnerabilities(
             analysis_request.vulnerabilities_data
         )
 
+        # Le supervisor retourne un objet AnalysisResult -> le convertir en dict
+        if hasattr(analysis_result, "to_dict"):
+            analysis_data = analysis_result.to_dict()
+        else:
+            analysis_data = analysis_result or {}
+
         logger.info(f"Analyse terminée pour {len(analysis_request.vulnerabilities_data)} vulnérabilités")
 
         return AnalysisResponse(
             analysis_id=str(uuid.uuid4()),
-            summary=analysis_result.get("analysis_summary", {}),
-            vulnerabilities=analysis_result.get("vulnerabilities", []),
-            remediation_plan=analysis_result.get("remediation_plan", {}),
+            summary=analysis_data.get("analysis_summary", {}),
+            vulnerabilities=analysis_data.get("vulnerabilities", []),
+            remediation_plan=analysis_data.get("remediation_plan", {}),
             analyzed_at=datetime.utcnow().isoformat()
         )
 
@@ -472,6 +420,12 @@ async def generate_fix_script(
             target_system=script_request.target_system
         )
 
+        # Le supervisor retourne un objet ScriptResult -> le convertir en dict
+        if hasattr(script_result, "to_dict"):
+            script_data = script_result.to_dict()
+        else:
+            script_data = script_result or {}
+
         script_id = str(uuid.uuid4())
 
         logger.info(f"Script généré: {script_id} pour vulnérabilité {script_request.vulnerability_id}")
@@ -479,10 +433,10 @@ async def generate_fix_script(
         return ScriptResponse(
             script_id=script_id,
             vulnerability_id=script_request.vulnerability_id,
-            script_content=script_result.get("main_script", ""),
-            rollback_script=script_result.get("rollback_script", ""),
+            script_content=script_data.get("main_script", ""),
+            rollback_script=script_data.get("rollback_script", ""),
             validation_status="pending",
-            risk_level=script_result.get("script_info", {}).get("risk_level", "MEDIUM"),
+            risk_level=script_data.get("script_info", {}).get("risk_level", "MEDIUM"),
             generated_at=datetime.utcnow().isoformat()
         )
 
@@ -518,12 +472,20 @@ async def validate_script(
         # Valider le script via le superviseur
         validation_result = await supervisor.validate_script(script_content)
 
+        # Certains validateurs peuvent renvoyer un objet -> le convertir si possible
+        if hasattr(validation_result, "to_dict"):
+            validation_data = validation_result.to_dict()
+        else:
+            validation_data = validation_result or {}
+
+        security_assessment = validation_data.get("security_assessment", {})
+
         return {
             "validation_id": str(uuid.uuid4()),
-            "is_safe": validation_result.get("security_assessment", {}).get("execution_recommendation") == "APPROVE",
-            "risk_level": validation_result.get("security_assessment", {}).get("overall_risk", "UNKNOWN"),
-            "identified_risks": validation_result.get("identified_risks", []),
-            "improvements": validation_result.get("improvements", []),
+            "is_safe": security_assessment.get("execution_recommendation") == "APPROVE",
+            "risk_level": security_assessment.get("overall_risk", "UNKNOWN"),
+            "identified_risks": validation_data.get("identified_risks", []),
+            "improvements": validation_data.get("improvements", []),
             "validated_at": datetime.utcnow().isoformat()
         }
 

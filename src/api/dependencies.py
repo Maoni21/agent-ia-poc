@@ -38,12 +38,18 @@ def get_supervisor() -> Supervisor:
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security),
 ) -> Dict[str, Any]:
-    """Dépendance pour l'authentification (actuellement permissive)."""
+    """
+    Dépendance pour l'authentification.
+
+    Actuellement : exige un token (ex: Bearer <token>), mais ne le valide pas encore
+    cryptographiquement. À renforcer avec une vraie vérification JWT/API key.
+    """
     if credentials is None:
-        return {"user_id": "anonymous", "role": "user"}
+        raise HTTPException(status_code=401, detail="Authentification requise")
 
     token = credentials.credentials
     if not token:
         raise HTTPException(status_code=401, detail="Token manquant")
 
-    return {"user_id": "authenticated", "role": "user"}
+    # TODO: Valider réellement le token (JWT, API key, etc.)
+    return {"user_id": "authenticated", "role": "user", "token": token}

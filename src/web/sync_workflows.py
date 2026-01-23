@@ -14,6 +14,10 @@ logger = logging.getLogger(__name__)
 
 def sync_workflow_to_db(workflow_data: Dict[str, Any], db_path: Path) -> bool:
     """Synchronise un workflow vers la base de données"""
+    # Toujours initialiser workflow_id AVANT le try pour éviter
+    # "cannot access local variable 'workflow_id' where it is not associated with a value"
+    workflow_id = workflow_data.get("workflow_id") or "unknown"
+
     try:
         # Créer la base de données si elle n'existe pas
         db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -86,8 +90,8 @@ def sync_workflow_to_db(workflow_data: Dict[str, Any], db_path: Path) -> bool:
             )
         """)
         
-        workflow_id = workflow_data.get("workflow_id")
-        if not workflow_id:
+        # Si aucun workflow_id exploitable, on ignore ce fichier
+        if not workflow_data.get("workflow_id"):
             return False
         
         # Insérer ou mettre à jour le workflow
@@ -127,21 +131,32 @@ def sync_workflow_to_db(workflow_data: Dict[str, Any], db_path: Path) -> bool:
             workflow_values["current_step"]
         ))
         
-        # Synchroniser les vulnérabilités depuis analysis_result
+        # Synchroniser les vulnérabilités depuis analysis_result puis scan_result
+        vulnerabilities_to_sync = []
+        
+        # D'abord depuis analysis_result (priorité)
         analysis_result = workflow_data.get("analysis_result")
         if analysis_result:
-            vulnerabilities = analysis_result.get("vulnerabilities", [])
-            for vuln in vulnerabilities:
+            vulns = analysis_result.get("vulnerabilities", []) or []
+            vulnerabilities_to_sync.extend(vulns)
+        
+        # Ensuite depuis scan_result si pas d'analyse
+        if not vulnerabilities_to_sync:
+            scan_result = workflow_data.get("scan_result")
+            if scan_result:
+                vulns = scan_result.get("vulnerabilities", []) or []
+                vulnerabilities_to_sync.extend(vulns)
+        
+        for vuln in vulnerabilities_to_sync:
                 vuln_dict = vuln if isinstance(vuln, dict) else vuln.to_dict() if hasattr(vuln, 'to_dict') else {}
                 
                 # Insérer ou mettre à jour la vulnérabilité
                 cursor.execute("""
                     INSERT OR REPLACE INTO vulnerabilities (
                         vulnerability_id, name, severity, cvss_score, description,
-                        affected_service, affected_port, cve_ids, references,
-                        detection_method, confidence, is_false_positive,
-                        false_positive_confidence, false_positive_reasoning
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        affected_service, affected_port, cve_ids, refs,
+                        detection_method, confidence
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     vuln_dict.get("vulnerability_id", ""),
                     vuln_dict.get("name", ""),
@@ -153,23 +168,22 @@ def sync_workflow_to_db(workflow_data: Dict[str, Any], db_path: Path) -> bool:
                     json.dumps(vuln_dict.get("cve_ids", [])),
                     json.dumps(vuln_dict.get("references", [])),
                     vuln_dict.get("detection_method", "nmap"),
-                    vuln_dict.get("confidence", "medium"),
-                    vuln_dict.get("is_false_positive", False),
-                    vuln_dict.get("false_positive_confidence"),
-                    vuln_dict.get("false_positive_reasoning")
+                    vuln_dict.get("confidence", "medium")
                 ))
                 
                 # Créer la liaison workflow-vulnérabilité
+                # Utiliser workflow_id comme scan_id pour les scans terminés
+                scan_id = workflow_data.get("scan_id") or workflow_id
                 cursor.execute("""
                     INSERT OR IGNORE INTO scan_vulnerabilities (
                         scan_id, vulnerability_id, detected_at, confidence, false_positive
                     ) VALUES (?, ?, ?, ?, ?)
                 """, (
-                    workflow_id,
+                    scan_id,
                     vuln_dict.get("vulnerability_id", ""),
-                    datetime.utcnow().isoformat(),
+                    workflow_data.get("started_at") or datetime.utcnow().isoformat(),
                     vuln_dict.get("confidence", "medium"),
-                    vuln_dict.get("is_false_positive", False)
+                    1 if vuln_dict.get("is_false_positive") else 0
                 ))
         
         # Synchroniser les scripts depuis script_results

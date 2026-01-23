@@ -25,6 +25,21 @@
             animation: fadeIn 0.5s ease-in-out;
         }
 
+        @keyframes slideIn {
+            from {
+                transform: translateX(100%);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+
+        .animate-fade-in {
+            animation: slideIn 0.3s ease-out;
+        }
+
         /* Scrollbar personnalisée */
         ::-webkit-scrollbar {
             width: 8px;
@@ -63,14 +78,24 @@
                                 <a href="#" class="text-white px-3 py-2 rounded-md text-sm font-medium bg-blue-700" onclick="showView('overview')">
                                     <i class="fas fa-home mr-1"></i> Vue d'ensemble
                                 </a>
-                                <a href="#" class="text-blue-100 hover:bg-blue-700 hover:text-white px-3 py-2 rounded-md text-sm font-medium" onclick="showView('vulnerabilities')">
-                                    <i class="fas fa-bug mr-1"></i> Vulnérabilités
-                                </a>
+                                <!-- Onglet Vulnérabilités retiré : les vulnérabilités sont maintenant accessibles uniquement via chaque scan individuel -->
                                 <a href="#" class="text-blue-100 hover:bg-blue-700 hover:text-white px-3 py-2 rounded-md text-sm font-medium" onclick="showView('scans')">
                                     <i class="fas fa-radar mr-1"></i> Scans
                                 </a>
                                 <a href="#" class="text-blue-100 hover:bg-blue-700 hover:text-white px-3 py-2 rounded-md text-sm font-medium" onclick="showView('scripts')">
                                     <i class="fas fa-code mr-1"></i> Scripts
+                                </a>
+                                <a href="#" class="text-blue-100 hover:bg-blue-700 hover:text-white px-3 py-2 rounded-md text-sm font-medium" onclick="showView('groups')">
+                                    <i class="fas fa-layer-group mr-1"></i> Groupes
+                                </a>
+                                <a href="#" class="text-blue-100 hover:bg-blue-700 hover:text-white px-3 py-2 rounded-md text-sm font-medium" onclick="showView('analysis')">
+                                    <i class="fas fa-brain mr-1"></i> Analyse
+                                </a>
+                                <a href="#" class="text-blue-100 hover:bg-blue-700 hover:text-white px-3 py-2 rounded-md text-sm font-medium" onclick="showView('correction')">
+                                    <i class="fas fa-wrench mr-1"></i> Correction
+                                </a>
+                                <a href="#" class="text-blue-100 hover:bg-blue-700 hover:text-white px-3 py-2 rounded-md text-sm font-medium" onclick="showView('analysis-history')">
+                                    <i class="fas fa-history mr-1"></i> Historique IA
                                 </a>
                             </div>
                         </div>
@@ -271,11 +296,16 @@
             <div id="vulnerabilities-view" class="view-container hidden">
                 <div class="bg-white rounded-lg shadow-lg p-6">
                     <div class="flex justify-between items-center mb-6">
-                        <h2 class="text-2xl font-bold text-gray-900">
-                            <i class="fas fa-bug mr-2"></i>
-                            Vulnérabilités Détectées
-                        </h2>
-                        <div class="flex space-x-4">
+                        <div class="flex items-center space-x-4">
+                            <button onclick="showView('scans')" class="text-gray-600 hover:text-gray-900 mr-2" title="Retour aux scans">
+                                <i class="fas fa-arrow-left text-xl"></i>
+                            </button>
+                            <h2 class="text-2xl font-bold text-gray-900">
+                                <i class="fas fa-bug mr-2"></i>
+                                Vulnérabilités Détectées
+                            </h2>
+                        </div>
+                        <div class="flex space-x-4 items-center">
                             <!-- Filtres -->
                             <select id="filter-severity" onchange="filterVulnerabilities()" class="rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
                                 <option value="">Toutes sévérités</option>
@@ -298,33 +328,151 @@
                                 onkeyup="filterVulnerabilities()"
                                 class="rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
                             >
+
+                            <select id="vuln-script-type" class="rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
+                                <option value="bash">Scripts Bash</option>
+                                <option value="ansible">Playbooks Ansible</option>
+                            </select>
+
+                            <button onclick="generateUpgradePlan()"
+                                    class="bg-orange-600 hover:bg-orange-700 text-white px-3 py-2 rounded-md text-sm">
+                                <i class="fas fa-arrow-up mr-1"></i>Plan de mises à jour
+                            </button>
+                            <button onclick="analyzeSelectedVulnerabilities()"
+                                    class="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded-md text-sm">
+                                <i class="fas fa-brain mr-1"></i>Analyser avec l'IA
+                            </button>
+                            <button onclick="generateScriptsForSelectedVulnerabilities()"
+                                    class="bg-green-600 hover:bg-green-700 text-white px-3 py-2 rounded-md text-sm">
+                                <i class="fas fa-tools mr-1"></i>Générer des scripts
+                            </button>
+                            <button onclick="exportVulnerabilitiesCSV()"
+                                    class="bg-purple-600 hover:bg-purple-700 text-white px-3 py-2 rounded-md text-sm">
+                                <i class="fas fa-download mr-1"></i>Exporter CSV
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <!-- Pagination -->
+                    <div id="vuln-pagination" class="mt-4 flex items-center justify-between">
+                        <div class="text-sm text-gray-600">
+                            <span id="vuln-pagination-info">Affichage de 0 à 0 sur 0</span>
+                        </div>
+                        <div class="flex space-x-2">
+                            <button id="vuln-prev-page" onclick="changeVulnPage(-1)" 
+                                    class="px-3 py-1 bg-gray-200 hover:bg-gray-300 rounded disabled:opacity-50 disabled:cursor-not-allowed"
+                                    disabled>
+                                <i class="fas fa-chevron-left"></i> Précédent
+                            </button>
+                            <span id="vuln-page-info" class="px-3 py-1 text-sm">Page 1</span>
+                            <button id="vuln-next-page" onclick="changeVulnPage(1)"
+                                    class="px-3 py-1 bg-gray-200 hover:bg-gray-300 rounded disabled:opacity-50 disabled:cursor-not-allowed"
+                                    disabled>
+                                Suivant <i class="fas fa-chevron-right"></i>
+                            </button>
                         </div>
                     </div>
 
                     <div class="overflow-x-auto">
                         <table class="min-w-full divide-y divide-gray-200">
                             <thead class="bg-gray-50">
-                                <tr>
-                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">CVE ID</th>
-                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Nom</th>
-                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Sévérité</th>
-                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">CVSS</th>
-                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Service</th>
-                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Faux Positif</th>
-                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Statut</th>
-                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
-                                </tr>
+                            <tr>
+                                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                                    <input type="checkbox" id="select-all-vulns" onclick="toggleSelectAllVulns(this)">
+                                </th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">CVE ID</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Nom</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Sévérité</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">CVSS</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Service</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Solution</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Faux Positif</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Statut</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Validation</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
+                            </tr>
                             </thead>
                             <tbody class="bg-white divide-y divide-gray-200" id="vulns-tbody">
-                                <tr>
-                                    <td colspan="8" class="px-6 py-4 text-center text-gray-500">
-                                        <i class="fas fa-spinner fa-spin mr-2"></i>Chargement...
-                                    </td>
-                                </tr>
+                            <tr>
+                                <td colspan="11" class="px-6 py-4 text-center text-gray-500">
+                                    <i class="fas fa-spinner fa-spin mr-2"></i>Chargement...
+                                </td>
+                            </tr>
                             </tbody>
                         </table>
                     </div>
+                    
+                    <!-- Section Plan de mises à jour -->
+                    <div id="upgrade-plan-section" class="mt-8 hidden">
+                        <div class="bg-gradient-to-r from-orange-50 to-yellow-50 rounded-lg shadow-lg p-6 border border-orange-200">
+                            <div class="flex justify-between items-center mb-4">
+                                <h3 class="text-xl font-bold text-gray-900">
+                                    <i class="fas fa-arrow-up mr-2 text-orange-600"></i>
+                                    Plan de Remédiation par Mises à Jour
+                                </h3>
+                                <button onclick="closeUpgradePlan()" class="text-gray-400 hover:text-gray-600">
+                                    <i class="fas fa-times text-xl"></i>
+                                </button>
+                            </div>
+                            
+                            <div id="upgrade-plan-loading" class="text-center py-8">
+                                <i class="fas fa-spinner fa-spin text-3xl text-orange-600 mb-4"></i>
+                                <p class="text-gray-600">Génération du plan de mises à jour optimisé...</p>
+                                <p class="text-sm text-gray-500 mt-2">Analyse des solutions pour identifier les mises à jour qui corrigent le maximum de vulnérabilités</p>
+                            </div>
+                            
+                            <div id="upgrade-plan-content" class="hidden">
+                                <div id="upgrade-plan-summary" class="mb-6 p-4 bg-white rounded-lg border border-orange-200">
+                                    <!-- Résumé du plan -->
+                                </div>
+                                
+                                <div id="upgrade-plan-steps" class="space-y-4">
+                                    <!-- Étapes du plan -->
+                                </div>
+                                
+                                <div id="upgrade-plan-notes" class="mt-6 p-4 bg-blue-50 rounded-lg border border-blue-200">
+                                    <!-- Notes et recommandations -->
+                                </div>
+                            </div>
+                            
+                            <div id="upgrade-plan-error" class="hidden text-center py-8">
+                                <i class="fas fa-exclamation-triangle text-3xl text-red-500 mb-4"></i>
+                                <p class="text-red-600 font-semibold">Erreur lors de la génération du plan</p>
+                                <p id="upgrade-plan-error-message" class="text-gray-600 mt-2"></p>
+                                <button onclick="generateUpgradePlan()" class="mt-4 bg-orange-600 hover:bg-orange-700 text-white px-4 py-2 rounded-md">
+                                    <i class="fas fa-redo mr-2"></i>Réessayer
+                                </button>
+                            </div>
+                        </div>
+                    </div>
                 </div>
+            </div>
+
+            <!-- MODAL DÉTAILS VULNÉRABILITÉ -->
+            <div id="vuln-details-modal" class="fixed inset-0 bg-gray-600 bg-opacity-50 hidden z-50 flex items-center justify-center">
+                <div class="bg-white rounded-lg shadow-xl max-w-3xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+                    <div class="p-6">
+                        <div class="flex justify-between items-center mb-4">
+                            <h3 class="text-2xl font-bold text-gray-900" id="vuln-modal-title">Détails de la vulnérabilité</h3>
+                            <button onclick="closeVulnModal()" class="text-gray-400 hover:text-gray-600">
+                                <i class="fas fa-times text-2xl"></i>
+                            </button>
+                        </div>
+                        <div id="vuln-modal-content" class="space-y-4">
+                            <!-- Contenu chargé dynamiquement -->
+                        </div>
+                        <div class="mt-6 flex justify-end">
+                            <button onclick="closeVulnModal()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md">
+                                Fermer
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- CONTAINER NOTIFICATIONS -->
+            <div id="notifications-container" class="fixed top-4 right-4 z-50 space-y-2">
+                <!-- Les notifications seront ajoutées ici dynamiquement -->
             </div>
 
             <!-- VUE SCANS -->
@@ -397,6 +545,242 @@
                                 </tr>
                             </tbody>
                         </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- VUE GROUPES DE VULNÉRABILITÉS -->
+            <div id="groups-view" class="view-container hidden">
+                <div class="bg-white rounded-lg shadow-lg p-6">
+                    <div class="flex justify-between items-center mb-6">
+                        <h2 class="text-2xl font-bold text-gray-900">
+                            <i class="fas fa-layer-group mr-2"></i>
+                            Groupes de Vulnérabilités
+                        </h2>
+                        <button onclick="openGroupModal()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md">
+                            <i class="fas fa-plus mr-2"></i>Nouveau Groupe
+                        </button>
+                    </div>
+
+                    <div class="overflow-x-auto">
+                        <table class="min-w-full divide-y divide-gray-200">
+                            <thead class="bg-gray-50">
+                                <tr>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Nom</th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Description</th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Vulnérabilités</th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Créé le</th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody class="bg-white divide-y divide-gray-200" id="groups-tbody">
+                                <tr>
+                                    <td colspan="5" class="px-6 py-4 text-center text-gray-500">
+                                        <i class="fas fa-spinner fa-spin mr-2"></i>Chargement...
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- VUE ANALYSE -->
+            <div id="analysis-view" class="view-container hidden">
+                <div class="bg-white rounded-lg shadow-lg p-6">
+                    <div class="flex justify-between items-center mb-6">
+                        <h2 class="text-2xl font-bold text-gray-900">
+                            <i class="fas fa-brain mr-2"></i>
+                            Analyse IA des Vulnérabilités
+                        </h2>
+                    </div>
+
+                    <!-- Section de sélection -->
+                    <div class="mb-6 bg-gray-50 rounded-lg p-6">
+                        <h3 class="text-lg font-semibold text-gray-900 mb-4">
+                            <i class="fas fa-list-check mr-2"></i>Sélectionner des vulnérabilités à analyser
+                        </h3>
+                        
+                        <!-- Option 1: Sélectionner un groupe -->
+                        <div class="mb-4">
+                            <label class="block text-sm font-medium text-gray-700 mb-2">
+                                <i class="fas fa-layer-group mr-2"></i>Analyser un groupe existant
+                            </label>
+                            <div class="flex gap-2">
+                                <select id="analysis-group-select" class="flex-1 rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
+                                    <option value="">-- Sélectionner un groupe --</option>
+                                </select>
+                                <button onclick="analyzeSelectedGroup()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md">
+                                    <i class="fas fa-brain mr-2"></i>Analyser ce groupe
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="border-t border-gray-300 my-4"></div>
+
+                        <!-- Option 2: Sélectionner des CVEs depuis un scan -->
+                        <div class="mb-4">
+                            <label class="block text-sm font-medium text-gray-700 mb-2">
+                                <i class="fas fa-radar mr-2"></i>Analyser des CVEs depuis un scan
+                            </label>
+                            <div class="flex gap-2 mb-2">
+                                <select id="analysis-scan-select" class="flex-1 rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500" onchange="loadScanVulnerabilitiesForAnalysis()">
+                                    <option value="">-- Sélectionner un scan --</option>
+                                </select>
+                            </div>
+                            <div id="analysis-scan-vulns" class="border rounded-md p-3 bg-white max-h-64 overflow-y-auto">
+                                <p class="text-gray-500 text-sm">Sélectionnez un scan pour charger les vulnérabilités</p>
+                            </div>
+                            <button onclick="analyzeSelectedCVEs()" class="mt-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md" id="analyze-selected-btn" disabled>
+                                <i class="fas fa-brain mr-2"></i>Analyser les CVEs sélectionnées
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Section résultats d'analyse -->
+                    <div id="analysis-results-section" class="hidden">
+                        <h3 class="text-lg font-semibold text-gray-900 mb-4">
+                            <i class="fas fa-chart-line mr-2"></i>Résultats de l'analyse
+                        </h3>
+                        <div id="analysis-results-content" class="bg-white border rounded-lg p-4">
+                            <!-- Contenu chargé dynamiquement -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- VUE CORRECTION -->
+            <div id="correction-view" class="view-container hidden">
+                <div class="bg-white rounded-lg shadow-lg p-6">
+                    <div class="flex justify-between items-center mb-6">
+                        <h2 class="text-2xl font-bold text-gray-900">
+                            <i class="fas fa-wrench mr-2"></i>
+                            Correction des Vulnérabilités
+                        </h2>
+                    </div>
+
+                    <!-- Section de sélection d'analyse -->
+                    <div class="mb-6 bg-gray-50 rounded-lg p-6">
+                        <h3 class="text-lg font-semibold text-gray-900 mb-4">
+                            <i class="fas fa-history mr-2"></i>Sélectionner une analyse
+                        </h3>
+                        <div class="flex gap-2">
+                            <select id="correction-analysis-select" class="flex-1 rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500" onchange="loadAnalyzedVulnerabilities()">
+                                <option value="">-- Sélectionner une analyse --</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- Liste des CVEs analysées -->
+                    <div id="correction-vulns-section" class="hidden">
+                        <h3 class="text-lg font-semibold text-gray-900 mb-4">
+                            <i class="fas fa-list-check mr-2"></i>Vulnérabilités analysées
+                        </h3>
+                        <div class="mb-4">
+                            <button onclick="selectAllForCorrection()" class="text-sm text-blue-600 hover:text-blue-800 mr-4">
+                                <i class="fas fa-check-square mr-1"></i>Tout sélectionner
+                            </button>
+                            <button onclick="deselectAllForCorrection()" class="text-sm text-gray-600 hover:text-gray-800">
+                                <i class="fas fa-square mr-1"></i>Tout désélectionner
+                            </button>
+                        </div>
+                        <div id="correction-vulns-list" class="border rounded-md p-4 bg-white">
+                            <!-- Liste chargée dynamiquement -->
+                        </div>
+                        <button onclick="generateCorrectionScripts()" class="mt-4 bg-green-600 hover:bg-green-700 text-white px-6 py-3 rounded-md font-semibold" id="generate-scripts-btn" disabled>
+                            <i class="fas fa-code mr-2"></i>Générer les scripts de correction
+                        </button>
+                    </div>
+
+                    <!-- Section scripts générés -->
+                    <div id="correction-scripts-section" class="hidden mt-6">
+                        <h3 class="text-lg font-semibold text-gray-900 mb-4">
+                            <i class="fas fa-file-code mr-2"></i>Scripts générés
+                        </h3>
+                        <div id="correction-scripts-content" class="space-y-4">
+                            <!-- Scripts chargés dynamiquement -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- VUE HISTORIQUE DES ANALYSES IA -->
+            <div id="analysis-history-view" class="view-container hidden">
+                <div class="bg-white rounded-lg shadow-lg p-6">
+                    <div class="flex justify-between items-center mb-6">
+                        <h2 class="text-2xl font-bold text-gray-900">
+                            <i class="fas fa-history mr-2"></i>
+                            Historique des Analyses IA
+                        </h2>
+                    </div>
+
+                    <div class="overflow-x-auto">
+                        <table class="min-w-full divide-y divide-gray-200">
+                            <thead class="bg-gray-50">
+                                <tr>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Cible</th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Vulnérabilités</th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Modèle IA</th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Confiance</th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Temps</th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody class="bg-white divide-y divide-gray-200" id="analysis-history-tbody">
+                                <tr>
+                                    <td colspan="7" class="px-6 py-4 text-center text-gray-500">
+                                        <i class="fas fa-spinner fa-spin mr-2"></i>Chargement...
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- MODAL CRÉATION GROUPE -->
+            <div id="group-modal" class="fixed inset-0 bg-gray-600 bg-opacity-50 hidden z-50 flex items-center justify-center">
+                <div class="bg-white rounded-lg shadow-xl max-w-2xl w-full mx-4">
+                    <div class="p-6">
+                        <div class="flex justify-between items-center mb-4">
+                            <h3 class="text-2xl font-bold text-gray-900">Créer un Groupe de Vulnérabilités</h3>
+                            <button onclick="closeGroupModal()" class="text-gray-400 hover:text-gray-600">
+                                <i class="fas fa-times text-2xl"></i>
+                            </button>
+                        </div>
+                        <form id="group-form" onsubmit="saveGroup(event)">
+                            <div class="mb-4">
+                                <label class="block text-sm font-medium text-gray-700 mb-2">Nom du groupe *</label>
+                                <input type="text" id="group-name" required
+                                       class="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                                       placeholder="Ex: Vulnérabilités critiques prioritaires">
+                            </div>
+                            <div class="mb-4">
+                                <label class="block text-sm font-medium text-gray-700 mb-2">Description</label>
+                                <textarea id="group-description" rows="3"
+                                          class="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                                          placeholder="Description du groupe..."></textarea>
+                            </div>
+                            <div class="mb-4">
+                                <label class="block text-sm font-medium text-gray-700 mb-2">
+                                    Vulnérabilités sélectionnées: <span id="group-vuln-count">0</span>
+                                </label>
+                                <div id="group-selected-vulns" class="border rounded-md p-3 min-h-[100px] bg-gray-50">
+                                    <p class="text-gray-500 text-sm">Sélectionnez des vulnérabilités depuis la vue vulnérabilités, puis créez le groupe.</p>
+                                </div>
+                            </div>
+                            <div class="flex justify-end space-x-3">
+                                <button type="button" onclick="closeGroupModal()"
+                                        class="bg-gray-300 hover:bg-gray-400 text-gray-800 px-4 py-2 rounded-md">
+                                    Annuler
+                                </button>
+                                <button type="submit"
+                                        class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md">
+                                    <i class="fas fa-save mr-2"></i>Créer le Groupe
+                                </button>
+                            </div>
+                        </form>
                     </div>
                 </div>
             </div>
@@ -570,7 +954,7 @@
     <!-- JavaScript -->
     <script>
         const API_BASE = 'http://localhost:8000/api';
-        const SCAN_API_BASE = 'http://localhost:8001/api/v2';
+        const SCAN_API_BASE = 'http://localhost:8000/api/v2';
 
         let severityChart = null;
         let timelineChart = null;
@@ -598,7 +982,7 @@
                 loadSeverityDistribution(),
                 loadTimeline(),
                 loadTopVulnerabilities(),
-                loadVulnerabilities(),
+                // loadVulnerabilities() retiré : les vulnérabilités sont maintenant chargées uniquement via chaque scan individuel
                 loadScans(),
                 loadScripts()
             ]);
@@ -778,21 +1162,66 @@
             }
         }
 
-        // Liste complète vulnérabilités
-        async function loadVulnerabilities() {
+        // Liste vulnérabilités (globale ou pour un scan donné)
+        async function loadVulnerabilities(scanId = null) {
             try {
-                const response = await fetch(`${API_BASE}/vulnerabilities?limit=100`);
+                let url;
+                if (scanId) {
+                    // Vue filtrée pour un scan spécifique
+                    url = `${API_BASE}/scans/${scanId}/vulnerabilities`;
+                    console.log(`🔍 Chargement vulnérabilités pour scan: ${scanId}`);
+                    console.log(`📡 URL: ${url}`);
+                } else {
+                    // Vue globale (toutes vulnérabilités agrégées)
+                    url = `${API_BASE}/vulnerabilities?limit=100`;
+                }
+
+                const response = await fetch(url);
+                console.log(`📥 Réponse status: ${response.status}`);
                 const data = await response.json();
+                console.log(`📊 Données reçues:`, data);
 
                 const tbody = document.getElementById('vulns-tbody');
                 tbody.innerHTML = '';
 
-                if (data.vulnerabilities.length === 0) {
-                    tbody.innerHTML = '<tr><td colspan="8" class="px-6 py-4 text-center text-gray-500">Aucune vulnérabilité</td></tr>';
+                if (!data.vulnerabilities || data.vulnerabilities.length === 0) {
+                    console.warn(`⚠️ Aucune vulnérabilité trouvée pour scan ${scanId}`);
+                    console.log(`📋 scan_info:`, data.scan_info);
+                    tbody.innerHTML = `<tr><td colspan="9" class="px-6 py-4 text-center text-gray-500">
+                        Aucune vulnérabilité trouvée pour ce scan (scan_id: ${scanId || 'N/A'})
+                    </td></tr>`;
                     return;
                 }
+                
+                console.log(`✅ ${data.vulnerabilities.length} vulnérabilités à afficher`);
 
-                data.vulnerabilities.forEach(vuln => {
+                // Mettre à jour le titre en fonction du contexte
+                const titleEl = document.querySelector('#vulnerabilities-view h2');
+                if (titleEl) {
+                    if (scanId && data.scan_info) {
+                        const scanInfo = data.scan_info;
+                        const target = scanInfo.target || 'N/A';
+                        const startedAt = scanInfo.started_at ? new Date(scanInfo.started_at).toLocaleString('fr-FR') : 'N/A';
+                        const count = data.count || 0;
+                        titleEl.innerHTML = `
+                            <i class="fas fa-bug mr-2"></i>
+                            Vulnérabilités détectées - Scan du ${startedAt}
+                            <span class="text-sm text-gray-600 ml-2">(Cible: ${target} • ${count} vulnérabilité${count > 1 ? 's' : ''})</span>
+                        `;
+                    } else if (scanId) {
+                        titleEl.innerHTML = `
+                            <i class="fas fa-bug mr-2"></i>
+                            Vulnérabilités détectées (scan ${scanId.substring(0, 8)}…)
+                        `;
+                    } else {
+                        titleEl.innerHTML = `
+                            <i class="fas fa-bug mr-2"></i>
+                            Vulnérabilités Détectées
+                        `;
+                    }
+                }
+
+                data.vulnerabilities.forEach((vuln, index) => {
                     const isFalsePositive = vuln.is_false_positive === true || vuln.is_false_positive === 'true';
                     const falsePositiveConfidence = vuln.false_positive_confidence || 0;
                     const falsePositiveBadge = isFalsePositive 
@@ -801,13 +1230,203 @@
                         </span>`
                         : '<span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">Vrai Positif</span>';
                     
+                    // Validation
+                    const validation = vuln.validation || {};
+                    const riskAssessment = validation.risk_assessment || 'UNKNOWN';
+                    const confidenceScore = validation.confidence_score || 0;
+                    const isValid = validation.is_valid;
+                    
+                    // Badge de validation
+                    let validationBadge = '';
+                    if (isValid === true) {
+                        validationBadge = '<span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800"><i class="fas fa-check-circle mr-1"></i>Validé</span>';
+                    } else if (isValid === false) {
+                        validationBadge = '<span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-red-100 text-red-800"><i class="fas fa-times-circle mr-1"></i>À vérifier</span>';
+                    } else {
+                        validationBadge = '<span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-gray-100 text-gray-800"><i class="fas fa-question-circle mr-1"></i>Non validé</span>';
+                    }
+                    
+                    // Menu déroulant de validation
+                    const validationMenuId = `validation-menu-${index}`;
+                    const validationContent = validation.evidence ? `
+                        <div id="${validationMenuId}" class="hidden absolute right-0 mt-2 w-96 bg-white rounded-lg shadow-xl z-50 border border-gray-200 p-4" style="max-height: 500px; overflow-y: auto;">
+                            <div class="mb-4">
+                                <h4 class="font-semibold text-lg text-gray-900 mb-2">
+                                    <i class="fas fa-shield-alt mr-2 text-blue-600"></i>
+                                    Rapport de Validation
+                                </h4>
+                                <div class="flex items-center space-x-2 mb-2">
+                                    ${validationBadge}
+                                    <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${getRiskColor(riskAssessment.toLowerCase())}">
+                                        ${riskAssessment}
+                                    </span>
+                                    <span class="text-xs text-gray-600">
+                                        Confiance: ${Math.round(confidenceScore * 100)}%
+                                    </span>
+                                </div>
+                            </div>
+                            
+                            <div class="space-y-3 text-sm">
+                                ${validation.evidence.detection_location ? `
+                                <!-- Section Plugin Output (format Tenable) -->
+                                <div>
+                                    <h5 class="font-semibold text-gray-700 mb-2">
+                                        <i class="fas fa-terminal mr-1 text-blue-600"></i>
+                                        Plugin Output
+                                    </h5>
+                                    <div class="bg-white border border-gray-300 rounded p-4">
+                                        <!-- Métadonnées du plugin (format Tenable) -->
+                                        <div class="grid grid-cols-3 gap-4 mb-4 pb-3 border-b border-gray-200 text-xs">
+                                            <div>
+                                                <span class="text-gray-500 block mb-1">Port</span>
+                                                <span class="font-mono text-gray-900">
+                                                    ${validation.evidence.detection_location.port || 'N/A'} / 
+                                                    ${validation.evidence.detection_location.protocol || 'tcp'} / 
+                                                    ${validation.evidence.detection_location.service || 'unknown'}
+                                                </span>
+                                            </div>
+                                            <div>
+                                                <span class="text-gray-500 block mb-1">Source</span>
+                                                <span class="font-medium text-gray-900">Nmap</span>
+                                            </div>
+                                            <div>
+                                                <span class="text-gray-500 block mb-1">Hit Date</span>
+                                                <span class="text-gray-900">${new Date().toLocaleString('fr-FR', { 
+                                                    year: 'numeric', 
+                                                    month: 'short', 
+                                                    day: 'numeric', 
+                                                    hour: '2-digit', 
+                                                    minute: '2-digit' 
+                                                })}</span>
+                                            </div>
+                                        </div>
+
+                                        <!-- Message détaillé du plugin (format Tenable) -->
+                                        <div class="mt-3">
+                                            <span class="text-gray-500 text-xs block mb-2 font-semibold">Detailed Message:</span>
+                                            <div class="bg-gray-50 p-3 rounded font-mono text-xs text-gray-800 whitespace-pre-wrap border border-gray-200">
+${formatPluginOutputMessage(validation.evidence.detection_location, vuln)}
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                ` : ''}
+                                <div>
+                                    <h5 class="font-semibold text-gray-700 mb-1">Preuves de Détection</h5>
+                                    <div class="bg-gray-50 p-2 rounded text-xs">
+                                        <p class="text-gray-600 mb-1"><strong>Source:</strong> ${validation.evidence.source || 'N/A'}</p>
+                                        <p class="text-gray-600 mb-1"><strong>CVSS extrait:</strong> ${validation.evidence.extracted_cvss || 'N/A'}</p>
+                                        <p class="text-gray-600 mb-1"><strong>Sévérité:</strong> ${validation.evidence.extracted_severity || 'N/A'}</p>
+                                        <p class="text-gray-600 mb-1">
+                                            <strong>CVE mentionnée:</strong> 
+                                            ${validation.evidence.cve_mentioned ? 
+                                                '<span class="text-green-600 font-semibold">✅ Oui (dans output ou références)</span>' : 
+                                                '<span class="text-red-600">❌ Non</span>'}
+                                        </p>
+                                        <p class="text-gray-600 mb-1"><strong>Niveau de confiance:</strong> 
+                                            <span class="font-semibold ${validation.evidence.confidence_level === 'HIGH' ? 'text-green-600' : validation.evidence.confidence_level === 'MEDIUM' ? 'text-yellow-600' : 'text-red-600'}">
+                                                ${validation.evidence.confidence_level || 'N/A'}
+                                            </span>
+                                        </p>
+                                        <p class="text-gray-600"><strong>Notes:</strong> ${validation.evidence.validation_notes || 'Aucune'}</p>
+                                    </div>
+                                </div>
+                                
+                                ${validation.cross_references ? `
+                                <div>
+                                    <h5 class="font-semibold text-gray-700 mb-1">Vérifications Croisées</h5>
+                                    <div class="bg-gray-50 p-2 rounded text-xs">
+                                        <p class="text-gray-600 mb-1">
+                                            <strong>Dans base locale:</strong> 
+                                            ${validation.cross_references.in_local_db ? 
+                                                '<span class="text-green-600">✅ Oui</span>' : 
+                                                '<span class="text-gray-500">❌ Non</span>'}
+                                        </p>
+                                        <p class="text-gray-600 mb-1">
+                                            <strong>Format CVE valide:</strong> 
+                                            ${validation.cross_references.cve_format_valid ? 
+                                                '<span class="text-green-600">✅ Oui</span>' : 
+                                                '<span class="text-gray-500">❌ Non</span>'}
+                                        </p>
+                                        ${validation.cross_references.has_vulners_references !== undefined ? `
+                                        <p class="text-gray-600 mb-1">
+                                            <strong>Références Vulners:</strong> 
+                                            ${validation.cross_references.has_vulners_references ? 
+                                                '<span class="text-green-600 font-semibold">✅ Oui (preuve forte)</span>' : 
+                                                '<span class="text-gray-500">❌ Non</span>'}
+                                        </p>
+                                        <p class="text-gray-600 mb-1">
+                                            <strong>Références CVE:</strong> 
+                                            ${validation.cross_references.has_cve_references ? 
+                                                '<span class="text-green-600 font-semibold">✅ Oui (preuve forte)</span>' : 
+                                                '<span class="text-gray-500">❌ Non</span>'}
+                                        </p>
+                                        <p class="text-gray-600 mb-1">
+                                            <strong>Références multiples (≥3):</strong> 
+                                            ${validation.cross_references.has_multiple_references ? 
+                                                '<span class="text-green-600">✅ Oui</span>' : 
+                                                '<span class="text-gray-500">❌ Non</span>'}
+                                        </p>
+                                        ` : ''}
+                                    </div>
+                                </div>
+                                ` : ''}
+                                
+                                ${validation.recommendations && validation.recommendations.length > 0 ? `
+                                <div>
+                                    <h5 class="font-semibold text-gray-700 mb-1">Recommandations</h5>
+                                    <ul class="list-disc list-inside bg-yellow-50 p-2 rounded text-xs">
+                                        ${validation.recommendations.map(rec => `<li class="text-gray-700">${rec}</li>`).join('')}
+                                    </ul>
+                                </div>
+                                ` : ''}
+                                
+                                ${validation.evidence.references_found && validation.evidence.references_found.length > 0 ? `
+                                <div>
+                                    <h5 class="font-semibold text-gray-700 mb-1">Références Trouvées</h5>
+                                    <div class="bg-blue-50 p-2 rounded text-xs max-h-32 overflow-y-auto">
+                                        ${validation.evidence.references_found.slice(0, 5).map(ref => 
+                                            `<a href="${ref}" target="_blank" class="text-blue-600 hover:underline block truncate">${ref}</a>`
+                                        ).join('')}
+                                    </div>
+                                </div>
+                                ` : ''}
+                            </div>
+                        </div>
+                    ` : '<div class="p-4 text-gray-500 text-sm">Aucune information de validation disponible</div>';
+                    
+                    // Lien de solution (priorité au lien principal, sinon première solution/référence)
+                    let solutionLink = vuln.primary_solution_link || null;
+                    if (!solutionLink && Array.isArray(vuln.solution_links) && vuln.solution_links.length > 0) {
+                        solutionLink = vuln.solution_links[0];
+                    }
+                    if (!solutionLink && Array.isArray(vuln.references) && vuln.references.length > 0) {
+                        solutionLink = vuln.references[0];
+                    }
+
+                    const solutionCell = solutionLink 
+                        ? `<a href="${solutionLink}" target="_blank" class="text-blue-600 hover:text-blue-800 underline text-xs">Voir</a>`
+                        : '<span class="text-gray-400 text-xs">N/A</span>';
+                    
                     const row = document.createElement('tr');
                     // Style spécial pour les faux positifs (ligne en gris clair)
                     if (isFalsePositive) {
                         row.className = 'bg-gray-50 opacity-75';
                     }
                     
+                    // Masquer les lignes au-delà de la première page initialement
+                    const start = (currentVulnPage - 1) * vulnsPerPage;
+                    const end = currentVulnPage * vulnsPerPage;
+                    if (index >= start && index < end) {
+                        row.style.display = '';
+                    } else {
+                        row.style.display = 'none';
+                    }
+                    
                     row.innerHTML = `
+                        <td class="px-4 py-4 whitespace-nowrap">
+                            <input type="checkbox" class="vuln-select" value="${vuln.vulnerability_id}">
+                        </td>
                         <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-blue-600">${vuln.vulnerability_id}</td>
                         <td class="px-6 py-4 text-sm text-gray-900">${vuln.name || 'N/A'}</td>
                         <td class="px-6 py-4 whitespace-nowrap">
@@ -817,6 +1436,9 @@
                         </td>
                         <td class="px-6 py-4 whitespace-nowrap text-sm font-bold ${getCVSSColor(vuln.cvss_score)}">${vuln.cvss_score || 'N/A'}</td>
                         <td class="px-6 py-4 text-sm text-gray-500">${vuln.affected_service || 'N/A'}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm">
+                            ${solutionCell}
+                        </td>
                         <td class="px-6 py-4 whitespace-nowrap">
                             ${falsePositiveBadge}
                         </td>
@@ -825,16 +1447,45 @@
                                 ${vuln.status || 'open'}
                             </span>
                         </td>
-                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                            <button onclick="viewVulnDetails('${vuln.vulnerability_id}', ${isFalsePositive}, ${falsePositiveConfidence}, '${(vuln.false_positive_reasoning || '').replace(/'/g, "\\'")}')" class="text-blue-600 hover:text-blue-900" title="Voir les détails">
-                                <i class="fas fa-eye"></i>
-                            </button>
+                        <td class="px-6 py-4 whitespace-nowrap">
+                            ${validationBadge}
+                        </td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 relative">
+                            <div class="flex items-center space-x-2">
+                                <button onclick="viewVulnDetails('${vuln.vulnerability_id}', ${isFalsePositive}, ${falsePositiveConfidence}, '${(vuln.false_positive_reasoning || '').replace(/'/g, "\\'")}')" class="text-blue-600 hover:text-blue-900" title="Voir les détails">
+                                    <i class="fas fa-eye"></i>
+                                </button>
+                                <div class="relative">
+                                    <button onclick="toggleValidationMenu('${validationMenuId}')" 
+                                            class="text-green-600 hover:text-green-900" 
+                                            title="Voir la validation">
+                                        <i class="fas fa-shield-alt"></i>
+                                    </button>
+                                    ${validationContent}
+                                </div>
+                            </div>
                         </td>
                     `;
                     tbody.appendChild(row);
                 });
+
+                // Réinitialiser la pagination
+                currentVulnPage = 1;
+                
+                // Appliquer les filtres déjà saisis
+                filterVulnerabilities();
+                
+                // Mettre à jour la pagination
+                updateVulnPagination(data);
             } catch (error) {
-                console.error('Erreur chargement vulnérabilités:', error);
+                console.error('❌ Erreur chargement vulnérabilités:', error);
+                console.error('Stack:', error.stack);
+                const tbody = document.getElementById('vulns-tbody');
+                if (tbody) {
+                    tbody.innerHTML = `<tr><td colspan="9" class="px-6 py-4 text-center text-red-500">
+                        Erreur lors du chargement: ${error.message}
+                    </td></tr>`;
+                }
             }
         }
 
@@ -871,6 +1522,11 @@
                         `;
                     } else if (canDownloadPDF) {
                         actions = `
+                            <button onclick="showVulnerabilitiesForScan('${scan.scan_id}')"
+                                    class="text-blue-600 hover:text-blue-900 mr-2"
+                                    title="Voir les vulnérabilités de ce scan">
+                                <i class="fas fa-bug"></i>
+                            </button>
                             <button onclick="downloadPDF('${scan.scan_id}')" 
                                     class="text-red-600 hover:text-red-900" 
                                     title="Télécharger le rapport PDF">
@@ -960,13 +1616,81 @@
             }
         }
 
+        // Afficher les vulnérabilités pour un scan spécifique
+        async function showVulnerabilitiesForScan(scanId) {
+            console.log(`🔍 Affichage vulnérabilités pour scan: ${scanId}`);
+            currentScanId = scanId;
+            
+            // Afficher la vue immédiatement avec un loader
+            showView('vulnerabilities');
+            const tbody = document.getElementById('vulns-tbody');
+            if (tbody) {
+                tbody.innerHTML = '<tr><td colspan="9" class="px-6 py-4 text-center text-gray-500"><i class="fas fa-spinner fa-spin mr-2"></i>Chargement des vulnérabilités...</td></tr>';
+            }
+            
+            // Essayer de charger les vulnérabilités avec retry
+            let retries = 0;
+            const maxRetries = 5;
+            const retryDelay = 2000; // 2 secondes
+            
+            while (retries < maxRetries) {
+                try {
+                    console.log(`📡 Tentative ${retries + 1}/${maxRetries} de chargement...`);
+                    await loadVulnerabilities(scanId);
+                    
+                    // Vérifier si des vulnérabilités ont été chargées
+                    if (tbody) {
+                        const isEmpty = tbody.innerHTML.includes('Aucune vulnérabilité trouvée') || 
+                                       tbody.innerHTML.includes('Chargement') ||
+                                       tbody.innerHTML.trim() === '';
+                        
+                        if (!isEmpty || retries >= maxRetries - 1) {
+                            // Soit on a des vulnérabilités, soit on a fait tous les essais
+                            console.log(`✅ Chargement terminé (vide: ${isEmpty})`);
+                            break;
+                        }
+                    }
+                    
+                    // Attendre avant de réessayer
+                    if (retries < maxRetries - 1) {
+                        console.log(`⏳ Réessai ${retries + 1}/${maxRetries} dans ${retryDelay/1000}s...`);
+                        if (tbody) {
+                            tbody.innerHTML = `<tr><td colspan="9" class="px-6 py-4 text-center text-gray-500"><i class="fas fa-spinner fa-spin mr-2"></i>Chargement... (tentative ${retries + 2}/${maxRetries})</td></tr>`;
+                        }
+                        await new Promise(resolve => setTimeout(resolve, retryDelay));
+                    }
+                    retries++;
+                } catch (error) {
+                    console.error(`❌ Erreur chargement vulnérabilités (tentative ${retries + 1}):`, error);
+                    if (tbody) {
+                        tbody.innerHTML = `<tr><td colspan="9" class="px-6 py-4 text-center text-red-500">
+                            Erreur lors du chargement: ${error.message}
+                            ${retries < maxRetries - 1 ? '<br><small>Nouvelle tentative dans 2 secondes...</small>' : ''}
+                        </td></tr>`;
+                    }
+                    
+                    if (retries >= maxRetries - 1) {
+                        // Dernier essai, afficher l'erreur finale
+                        showNotification(`Impossible de charger les vulnérabilités pour ce scan: ${error.message}`, 'error');
+                        break;
+                    }
+                    
+                    await new Promise(resolve => setTimeout(resolve, retryDelay));
+                    retries++;
+                }
+            }
+        }
+
         // Navigation entre les vues
         function showView(viewName) {
             document.querySelectorAll('.view-container').forEach(view => {
                 view.classList.add('hidden');
             });
 
-            document.getElementById(`${viewName}-view`).classList.remove('hidden');
+            const targetView = document.getElementById(`${viewName}-view`);
+            if (targetView) {
+                targetView.classList.remove('hidden');
+            }
 
             // Mettre à jour la navigation
             document.querySelectorAll('nav a').forEach(link => {
@@ -974,8 +1698,96 @@
                 link.classList.add('text-blue-100');
             });
 
-            event.target.classList.add('bg-blue-700', 'text-white');
+            // Trouver le lien correspondant et le mettre en surbrillance
+            const navLinks = document.querySelectorAll('nav a');
+            navLinks.forEach(link => {
+                if (link.getAttribute('onclick') && link.getAttribute('onclick').includes(`showView('${viewName}')`)) {
+                    link.classList.add('bg-blue-700', 'text-white');
+                    link.classList.remove('text-blue-100');
+                }
+            });
+
+            // Charger les données si nécessaire
+            if (viewName === 'groups') {
+                loadVulnerabilityGroups();
+            } else if (viewName === 'analysis') {
+                loadGroupsForAnalysis();
+                loadScansForAnalysis();
+            } else if (viewName === 'correction') {
+                loadAnalysesForCorrection();
+            } else if (viewName === 'analysis-history') {
+                loadAnalysisHistory();
+            }
             event.target.classList.remove('text-blue-100');
+        }
+
+        // Variables de pagination
+        let currentVulnPage = 1;
+        const vulnsPerPage = 50;
+
+        // Mettre à jour la pagination des vulnérabilités
+        function updateVulnPagination(data) {
+            try {
+                const paginationInfo = document.getElementById('vuln-pagination-info');
+                const prevButton = document.getElementById('vuln-prev-page');
+                const nextButton = document.getElementById('vuln-next-page');
+                
+                if (!paginationInfo) return;
+                
+                const total = data.count || data.vulnerabilities?.length || 0;
+                const start = total > 0 ? (currentVulnPage - 1) * vulnsPerPage + 1 : 0;
+                const end = Math.min(currentVulnPage * vulnsPerPage, total);
+                
+                paginationInfo.textContent = `Affichage de ${start} à ${end} sur ${total}`;
+                
+                // Activer/désactiver les boutons
+                if (prevButton) {
+                    prevButton.disabled = currentVulnPage <= 1;
+                }
+                if (nextButton) {
+                    nextButton.disabled = end >= total;
+                }
+            } catch (error) {
+                console.error('Erreur mise à jour pagination:', error);
+            }
+        }
+
+        // Changer de page pour les vulnérabilités
+        function changeVulnPage(direction) {
+            const rows = Array.from(document.querySelectorAll('#vulns-tbody tr')).filter(row => {
+                return row.style.display !== 'none' && !row.innerHTML.includes('Aucune vulnérabilité');
+            });
+            const totalVisible = rows.length;
+            const totalPages = Math.ceil(totalVisible / vulnsPerPage);
+            
+            if (totalPages === 0) {
+                return;
+            }
+            
+            const newPage = currentVulnPage + direction;
+            if (newPage < 1 || newPage > totalPages) {
+                return;
+            }
+            
+            currentVulnPage = newPage;
+            
+            // Afficher/masquer les lignes selon la page
+            rows.forEach((row, index) => {
+                const start = (currentVulnPage - 1) * vulnsPerPage;
+                const end = currentVulnPage * vulnsPerPage;
+                if (index >= start && index < end) {
+                    row.style.display = '';
+                } else {
+                    row.style.display = 'none';
+                }
+            });
+            
+            // Mettre à jour l'affichage de la pagination
+            const data = {
+                count: totalVisible,
+                vulnerabilities: rows
+            };
+            updateVulnPagination(data);
         }
 
         // Filtrer vulnérabilités
@@ -991,7 +1803,7 @@
                 
                 // Filtre par sévérité
                 if (severityFilter) {
-                    const severityCell = row.querySelector('td:nth-child(3) span');
+                    const severityCell = row.querySelector('td:nth-child(4) span');
                     if (severityCell && !severityCell.textContent.includes(severityFilter)) {
                         show = false;
                     }
@@ -999,7 +1811,8 @@
                 
                 // Filtre par faux positif
                 if (falsePositiveFilter) {
-                    const falsePositiveCell = row.querySelector('td:nth-child(6) span');
+                    // La colonne "Faux Positif" est maintenant en 8ème position (après "Solution")
+                    const falsePositiveCell = row.querySelector('td:nth-child(8) span');
                     if (falsePositiveCell) {
                         const isFalsePositive = falsePositiveCell.textContent.includes('Faux Positif');
                         if (falsePositiveFilter === 'false_positive' && !isFalsePositive) {
@@ -1012,8 +1825,8 @@
                 
                 // Filtre par recherche
                 if (searchTerm) {
-                    const cveCell = row.querySelector('td:nth-child(1)');
-                    const nameCell = row.querySelector('td:nth-child(2)');
+                    const cveCell = row.querySelector('td:nth-child(2)');
+                    const nameCell = row.querySelector('td:nth-child(3)');
                     const cveText = cveCell ? cveCell.textContent.toLowerCase() : '';
                     const nameText = nameCell ? nameCell.textContent.toLowerCase() : '';
                     if (!cveText.includes(searchTerm) && !nameText.includes(searchTerm)) {
@@ -1023,26 +1836,290 @@
                 
                 row.style.display = show ? '' : 'none';
             });
+            
+            // Réinitialiser la pagination après filtrage
+            currentVulnPage = 1;
+            const visibleRows = document.querySelectorAll('#vulns-tbody tr:not([style*="display: none"])');
+            const data = {
+                count: visibleRows.length,
+                vulnerabilities: Array.from(visibleRows)
+            };
+            updateVulnPagination(data);
+            
+            // Réappliquer la pagination
+            changeVulnPage(0);
         }
 
         // Détails vulnérabilité
-        function viewVulnDetails(vulnId, isFalsePositive = false, confidence = 0, reasoning = '') {
-            let message = `Détails de ${vulnId}\n\n`;
+        // === SYSTÈME DE NOTIFICATIONS ===
+        function showNotification(message, type = 'info', duration = 5000) {
+            const container = document.getElementById('notifications-container');
+            if (!container) return;
             
-            if (isFalsePositive) {
-                message += `⚠️ FAUX POSITIF DÉTECTÉ\n`;
-                message += `Confiance: ${Math.round(confidence * 100)}%\n\n`;
-                if (reasoning) {
-                    message += `Raisonnement:\n${reasoning}\n\n`;
+            const notification = document.createElement('div');
+            const bgColor = {
+                'success': 'bg-green-500',
+                'error': 'bg-red-500',
+                'warning': 'bg-yellow-500',
+                'info': 'bg-blue-500'
+            }[type] || 'bg-blue-500';
+            
+            const icon = {
+                'success': 'fa-check-circle',
+                'error': 'fa-exclamation-circle',
+                'warning': 'fa-exclamation-triangle',
+                'info': 'fa-info-circle'
+            }[type] || 'fa-info-circle';
+            
+            notification.className = `${bgColor} text-white px-6 py-4 rounded-lg shadow-lg flex items-center space-x-3 min-w-[300px] max-w-md animate-fade-in`;
+            notification.innerHTML = `
+                <i class="fas ${icon} text-xl"></i>
+                <span class="flex-1">${message}</span>
+                <button onclick="this.parentElement.remove()" class="text-white hover:text-gray-200">
+                    <i class="fas fa-times"></i>
+                </button>
+            `;
+            
+            container.appendChild(notification);
+            
+            // Auto-suppression après la durée spécifiée
+            setTimeout(() => {
+                if (notification.parentElement) {
+                    notification.style.opacity = '0';
+                    notification.style.transition = 'opacity 0.3s';
+                    setTimeout(() => notification.remove(), 300);
                 }
-                message += `Cette vulnérabilité a été identifiée comme un faux positif par l'IA.\n`;
-                message += `Il est recommandé de vérifier manuellement avant de prendre des mesures.`;
-            } else {
-                message += `✅ Vrai positif confirmé\n\n`;
-                message += `Cette vulnérabilité nécessite une action immédiate.`;
+            }, duration);
+        }
+
+        // === MODAL DÉTAILS VULNÉRABILITÉ ===
+        async function viewVulnDetails(vulnId, isFalsePositive = false, confidence = 0, reasoning = '') {
+            const modal = document.getElementById('vuln-details-modal');
+            const title = document.getElementById('vuln-modal-title');
+            const content = document.getElementById('vuln-modal-content');
+            
+            if (!modal || !title || !content) {
+                // Fallback si la modal n'existe pas
+                alert(`Détails de ${vulnId}`);
+                return;
             }
             
-            alert(message);
+            title.textContent = `Détails: ${vulnId}`;
+            
+            // Charger les détails complets depuis l'API
+            try {
+                const response = await fetch(`${API_BASE}/vulnerabilities/${vulnId}`);
+                const data = await response.json();
+                const vuln = data.vulnerability || {};
+                
+                let html = `
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="text-sm font-semibold text-gray-600">CVE ID</label>
+                            <p class="text-lg font-mono">${vuln.vulnerability_id || vulnId}</p>
+                        </div>
+                        <div>
+                            <label class="text-sm font-semibold text-gray-600">Sévérité</label>
+                            <p class="text-lg">
+                                <span class="px-2 py-1 rounded ${getSeverityColor(vuln.severity)}">
+                                    ${vuln.severity || 'N/A'}
+                                </span>
+                            </p>
+                        </div>
+                        <div>
+                            <label class="text-sm font-semibold text-gray-600">Score CVSS</label>
+                            <p class="text-lg font-bold ${getCVSSColor(vuln.cvss_score)}">
+                                ${vuln.cvss_score || 'N/A'}
+                            </p>
+                        </div>
+                        <div>
+                            <label class="text-sm font-semibold text-gray-600">Service affecté</label>
+                            <p class="text-lg">${vuln.affected_service || 'N/A'}</p>
+                        </div>
+                        <div>
+                            <label class="text-sm font-semibold text-gray-600">Port</label>
+                            <p class="text-lg">${vuln.affected_port || 'N/A'}</p>
+                        </div>
+                    </div>
+                    <div class="mt-4">
+                        <label class="text-sm font-semibold text-gray-600">Description</label>
+                        <p class="text-gray-700 mt-1">${vuln.description || 'Aucune description disponible'}</p>
+                    </div>
+                `;
+                
+                if (isFalsePositive) {
+                    html += `
+                        <div class="mt-4 p-4 bg-yellow-50 border-l-4 border-yellow-400 rounded">
+                            <div class="flex items-center">
+                                <i class="fas fa-exclamation-triangle text-yellow-600 mr-2"></i>
+                                <h4 class="font-semibold text-yellow-800">Faux Positif Détecté</h4>
+                            </div>
+                            <p class="mt-2 text-yellow-700">
+                                <strong>Confiance:</strong> ${Math.round(confidence * 100)}%
+                            </p>
+                            ${reasoning ? `<p class="mt-2 text-yellow-700"><strong>Raisonnement:</strong> ${reasoning}</p>` : ''}
+                            <p class="mt-2 text-sm text-yellow-600">
+                                Cette vulnérabilité a été identifiée comme un faux positif par l'IA. 
+                                Il est recommandé de vérifier manuellement avant de prendre des mesures.
+                            </p>
+                        </div>
+                    `;
+                }
+                
+                content.innerHTML = html;
+            } catch (error) {
+                // Fallback avec les données minimales
+                content.innerHTML = `
+                    <div>
+                        <p class="font-semibold">CVE ID: ${vulnId}</p>
+                        ${isFalsePositive ? `
+                            <div class="mt-4 p-4 bg-yellow-50 border-l-4 border-yellow-400 rounded">
+                                <p class="text-yellow-800"><strong>Faux Positif</strong> (Confiance: ${Math.round(confidence * 100)}%)</p>
+                                ${reasoning ? `<p class="mt-2 text-yellow-700">${reasoning}</p>` : ''}
+                            </div>
+                        ` : ''}
+                    </div>
+                `;
+            }
+            
+            modal.classList.remove('hidden');
+        }
+
+        function closeVulnModal() {
+            const modal = document.getElementById('vuln-details-modal');
+            if (modal) {
+                modal.classList.add('hidden');
+            }
+        }
+
+        // === SÉLECTION DE VULNÉRABILITÉS & APPELS IA ===
+
+        function getSelectedVulnerabilityIds() {
+            const checkboxes = document.querySelectorAll('.vuln-select:checked');
+            return Array.from(checkboxes).map(cb => cb.value);
+        }
+
+        function toggleSelectAllVulns(source) {
+            const checkboxes = document.querySelectorAll('.vuln-select');
+            checkboxes.forEach(cb => {
+                cb.checked = source.checked;
+            });
+        }
+
+        async function analyzeSelectedVulnerabilities() {
+            const ids = getSelectedVulnerabilityIds();
+            if (!ids.length) {
+                showNotification("Veuillez sélectionner au moins une vulnérabilité.", 'warning');
+                return;
+            }
+
+            const btn = document.querySelector('button[onclick="analyzeSelectedVulnerabilities()"]');
+            const originalContent = btn ? btn.innerHTML : '';
+            
+            // Désactiver le bouton et afficher le chargement
+            if (btn) {
+                btn.disabled = true;
+                btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i>Analyse en cours...';
+                btn.classList.add('opacity-50', 'cursor-not-allowed');
+            }
+
+            try {
+                showNotification(`Analyse IA en cours pour ${ids.length} vulnérabilité(s)...`, 'info');
+
+                const response = await fetch(`${SCAN_API_BASE}/ai/analyze`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        vulnerability_ids: ids
+                    })
+                });
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.detail || 'Erreur lors de l\'analyse IA');
+                }
+
+                console.log('Résultat analyse IA:', data);
+                showNotification(`✅ Analyse IA terminée pour ${ids.length} vulnérabilité(s).`, 'success');
+
+                // Rafraîchir les stats et la liste (false positifs, etc.)
+                await loadOverviewStats();
+                if (currentScanId) {
+                    await loadVulnerabilities(currentScanId);
+                } else {
+                    await loadVulnerabilities();
+                }
+            } catch (error) {
+                console.error('Erreur analyse IA:', error);
+                showNotification('❌ Erreur analyse IA: ' + error.message, 'error');
+            } finally {
+                // Réactiver le bouton
+                if (btn) {
+                    btn.disabled = false;
+                    btn.innerHTML = originalContent;
+                    btn.classList.remove('opacity-50', 'cursor-not-allowed');
+                }
+            }
+        }
+
+        async function generateScriptsForSelectedVulnerabilities() {
+            const ids = getSelectedVulnerabilityIds();
+            if (!ids.length) {
+                showNotification("Veuillez sélectionner au moins une vulnérabilité.", 'warning');
+                return;
+            }
+
+            const scriptType = document.getElementById('vuln-script-type').value || 'bash';
+            const btn = document.querySelector('button[onclick="generateScriptsForSelectedVulnerabilities()"]');
+            const originalContent = btn ? btn.innerHTML : '';
+            
+            // Désactiver le bouton et afficher le chargement
+            if (btn) {
+                btn.disabled = true;
+                btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i>Génération...';
+                btn.classList.add('opacity-50', 'cursor-not-allowed');
+            }
+
+            try {
+                showNotification(`Génération de scripts (${scriptType}) pour ${ids.length} vulnérabilité(s)...`, 'info');
+
+                const response = await fetch(`${SCAN_API_BASE}/ai/generate-scripts`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        vulnerability_ids: ids,
+                        script_type: scriptType
+                    })
+                });
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.detail || 'Erreur lors de la génération des scripts');
+                }
+
+                console.log('Scripts générés:', data);
+                const scriptsCount = data.scripts?.length || data.scripts_generated || 0;
+                showNotification(`✅ ${scriptsCount} script(s) généré(s) pour ${ids.length} vulnérabilité(s).`, 'success');
+
+                // Rafraîchir la liste des scripts dans le dashboard
+                await loadScripts();
+            } catch (error) {
+                console.error('Erreur génération scripts:', error);
+                showNotification('❌ Erreur génération scripts: ' + error.message, 'error');
+            } finally {
+                // Réactiver le bouton
+                if (btn) {
+                    btn.disabled = false;
+                    btn.innerHTML = originalContent;
+                    btn.classList.remove('opacity-50', 'cursor-not-allowed');
+                }
+            }
         }
 
         // Fonctions utilitaires pour les couleurs
@@ -1086,13 +2163,146 @@
         }
 
         function getRiskColor(risk) {
+            const riskLower = risk.toLowerCase();
             const colors = {
+                'confirmed': 'bg-green-100 text-green-800',
+                'likely': 'bg-blue-100 text-blue-800',
+                'possible': 'bg-yellow-100 text-yellow-800',
+                'unlikely': 'bg-orange-100 text-orange-800',
+                'unknown': 'bg-gray-100 text-gray-800',
                 'low': 'bg-green-100 text-green-800',
                 'medium': 'bg-yellow-100 text-yellow-800',
                 'high': 'bg-orange-100 text-orange-800',
                 'critical': 'bg-red-100 text-red-800'
             };
-            return colors[risk] || 'bg-gray-100 text-gray-800';
+            return colors[riskLower] || 'bg-gray-100 text-gray-800';
+        }
+
+        function toggleValidationMenu(menuId) {
+            const menu = document.getElementById(menuId);
+            if (menu) {
+                // Fermer tous les autres menus
+                document.querySelectorAll('[id^="validation-menu-"]').forEach(m => {
+                    if (m.id !== menuId) {
+                        m.classList.add('hidden');
+                    }
+                });
+                // Toggle le menu actuel
+                menu.classList.toggle('hidden');
+            }
+        }
+
+        // Fermer les menus quand on clique ailleurs
+        document.addEventListener('click', function(event) {
+            if (!event.target.closest('[id^="validation-menu-"]') && !event.target.closest('button[onclick*="toggleValidationMenu"]')) {
+                document.querySelectorAll('[id^="validation-menu-"]').forEach(m => {
+                    m.classList.add('hidden');
+                });
+            }
+        });
+
+        // Fonction pour formater le message du plugin (format Tenable)
+        function formatPluginOutputMessage(detectionLocation, vuln) {
+            let message = '';
+            const versionInfo = detectionLocation.version_info || {};
+            
+            // Utiliser les informations extraites depuis version_info
+            let serviceName = versionInfo.service_name || vuln.affected_service || 'Service';
+            let detectedVersion = versionInfo.detected_version;
+            let product = versionInfo.product;
+            
+            // Si on a un produit, formater le nom (ex: "http_server" -> "Apache httpd")
+            if (product) {
+                if (product.includes('http')) {
+                    serviceName = 'Apache httpd';
+                } else if (product.includes('ssh')) {
+                    serviceName = 'OpenSSH';
+                } else {
+                    serviceName = product.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+                }
+            }
+            
+            // Construire le message formaté (style Tenable)
+            if (detectionLocation.detected_files && detectionLocation.detected_files.length > 0) {
+                // Format avec fichier (comme l'exemple Tenable)
+                const filePath = detectionLocation.detected_files[0];
+                message = `- ${filePath}`;
+                
+                if (versionInfo.patch_status === 'not_patched') {
+                    message += ' has not been patched.';
+                } else if (detectedVersion) {
+                    message += ' is vulnerable.';
+                } else {
+                    message += ' is vulnerable.';
+                }
+                
+                if (detectedVersion) {
+                    message += `\nRemote version: ${detectedVersion}`;
+                }
+                
+                if (versionInfo.required_version) {
+                    message += `\nShould be: ${versionInfo.required_version}`;
+                } else if (detectedVersion) {
+                    message += `\nShould be: >=${detectedVersion} (update recommended)`;
+                }
+            } else if (detectedVersion) {
+                // Format sans fichier mais avec version (style Tenable)
+                message = `${serviceName} ${detectedVersion} is vulnerable.`;
+                message += `\nRemote version: ${detectedVersion}`;
+                
+                if (versionInfo.required_version) {
+                    message += `\nShould be: ${versionInfo.required_version}`;
+                } else {
+                    message += `\nShould be: >=${detectedVersion} (update recommended)`;
+                }
+            } else {
+                // Fallback: message formaté avec CVE
+                if (versionInfo.cves && versionInfo.cves.length > 0) {
+                    message = `Vulnerability detected in ${serviceName}.`;
+                    message += `\n\nAffected CVEs:`;
+                    versionInfo.cves.forEach(cve => {
+                        message += `\n- ${cve}`;
+                    });
+                    
+                    if (versionInfo.exploit_count && versionInfo.exploit_count > 0) {
+                        message += `\n\n⚠️ ${versionInfo.exploit_count} exploit(s) available`;
+                    }
+                } else {
+                    // Dernier recours: extraire CVE depuis raw_output
+                    const rawOutput = detectionLocation.raw_output || '';
+                    const cveMatches = rawOutput.match(/(CVE-\d{4}-\d{4,})/gi);
+                    const uniqueCves = [...new Set(cveMatches || [])].slice(0, 5);
+                    
+                    if (uniqueCves.length > 0) {
+                        message = `Vulnerability detected in ${serviceName}.`;
+                        message += `\n\nAffected CVEs:`;
+                        uniqueCves.forEach(cve => {
+                            message += `\n- ${cve}`;
+                        });
+                        
+                        const exploitMatches = rawOutput.match(/\*EXPLOIT\*/gi);
+                        if (exploitMatches && exploitMatches.length > 0) {
+                            message += `\n\n⚠️ ${exploitMatches.length} exploit(s) available`;
+                        }
+                    } else {
+                        message = `Vulnerability detected in ${serviceName}.`;
+                        message += `\n\nNo additional details available.`;
+                    }
+                }
+            }
+            
+            // Ajouter des informations supplémentaires si disponibles
+            if (detectionLocation.detected_files && detectionLocation.detected_files.length > 1) {
+                message += `\n\nAdditional files detected:`;
+                detectionLocation.detected_files.slice(1, 4).forEach(file => {
+                    message += `\n- ${file}`;
+                });
+                if (detectionLocation.detected_files.length > 4) {
+                    message += `\n... and ${detectionLocation.detected_files.length - 4} more`;
+                }
+            }
+            
+            return message.trim();
         }
 
         // === FONCTIONS DE LANCEMENT DE SCAN ===
@@ -1183,51 +2393,46 @@
                 currentWebSocket.close();
             }
 
-            // Créer la connexion WebSocket
-            const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            const wsHost = 'localhost:8001';
-            const wsUrl = `${wsProtocol}//${wsHost}/ws/scan/${scanId}`;
-            
-            currentWebSocket = new WebSocket(wsUrl);
+            // Utiliser le polling au lieu du WebSocket (dashboard_api n'a pas de WebSocket)
+            startPolling(scanId);
+        }
 
-            currentWebSocket.onopen = () => {
-                console.log('WebSocket connecté pour scan', scanId);
-                // Envoyer un ping pour maintenir la connexion
-                setInterval(() => {
-                    if (currentWebSocket && currentWebSocket.readyState === WebSocket.OPEN) {
-                        currentWebSocket.send('ping');
-                    }
-                }, 30000); // Ping toutes les 30 secondes
-            };
+        function startPolling(scanId) {
+            // Arrêter le polling précédent si il existe
+            if (window.scanPollInterval) {
+                clearInterval(window.scanPollInterval);
+            }
 
-            currentWebSocket.onmessage = (event) => {
+            // Fonction de polling
+            const pollStatus = async () => {
                 try {
-                    const data = JSON.parse(event.data);
-                    
-                    if (data.type === 'progress_update') {
-                        updateProgressUI(data.data);
+                    const response = await fetch(`${SCAN_API_BASE}/scans/${scanId}/status`);
+                    if (response.ok) {
+                        const status = await response.json();
+                        updateProgressUI(status);
+                        
+                        // Arrêter le polling si le scan est terminé
+                        if (status.status === 'completed' || status.status === 'failed') {
+                            clearInterval(window.scanPollInterval);
+                            window.scanPollInterval = null;
+                            
+                            // Si terminé, recharger les scans et afficher la vue scans
+                            if (status.status === 'completed') {
+                                setTimeout(async () => {
+                                    await loadScans();
+                                    showView('scans');
+                                }, 2000);
+                            }
+                        }
                     }
                 } catch (error) {
-                    console.error('Erreur parsing WebSocket message:', error);
+                    console.error('Erreur polling scan status:', error);
                 }
             };
 
-            currentWebSocket.onerror = (error) => {
-                console.error('WebSocket erreur:', error);
-                document.getElementById('status-message').textContent = 'Erreur de connexion au serveur';
-            };
-
-            currentWebSocket.onclose = () => {
-                console.log('WebSocket fermé');
-                // Si le scan n'est pas terminé, essayer de se reconnecter
-                if (scanId === currentScanId) {
-                    setTimeout(() => {
-                        if (scanId === currentScanId) {
-                            connectWebSocket(scanId);
-                        }
-                    }, 3000);
-                }
-            };
+            // Poller immédiatement puis toutes les 2 secondes
+            pollStatus();
+            window.scanPollInterval = setInterval(pollStatus, 2000);
         }
 
         function updateProgressUI(status) {
@@ -1350,6 +2555,1000 @@
             } catch (error) {
                 console.error('Erreur téléchargement PDF:', error);
                 alert('Erreur lors du téléchargement du PDF: ' + error.message);
+            }
+        }
+
+        // === GESTION DES GROUPES DE VULNÉRABILITÉS ===
+        let selectedVulnsForGroup = [];
+
+        function openGroupModal() {
+            selectedVulnsForGroup = getSelectedVulnerabilityIds();
+            document.getElementById('group-vuln-count').textContent = selectedVulnsForGroup.length;
+            
+            const container = document.getElementById('group-selected-vulns');
+            if (selectedVulnsForGroup.length > 0) {
+                container.innerHTML = selectedVulnsForGroup.map(id => 
+                    `<span class="inline-block bg-blue-100 text-blue-800 px-2 py-1 rounded text-sm mr-2 mb-2">${id}</span>`
+                ).join('');
+            } else {
+                container.innerHTML = '<p class="text-gray-500 text-sm">Sélectionnez des vulnérabilités depuis la vue vulnérabilités, puis créez le groupe.</p>';
+            }
+            
+            document.getElementById('group-modal').classList.remove('hidden');
+        }
+
+        function closeGroupModal() {
+            document.getElementById('group-modal').classList.add('hidden');
+            document.getElementById('group-form').reset();
+            selectedVulnsForGroup = [];
+        }
+
+        async function saveGroup(event) {
+            event.preventDefault();
+            
+            const name = document.getElementById('group-name').value;
+            const description = document.getElementById('group-description').value;
+            
+            if (selectedVulnsForGroup.length === 0) {
+                showNotification('Veuillez sélectionner au moins une vulnérabilité.', 'warning');
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_BASE}/vulnerability-groups`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        name: name,
+                        description: description,
+                        vulnerability_ids: selectedVulnsForGroup
+                    })
+                });
+
+                const data = await response.json();
+                
+                if (!response.ok) {
+                    throw new Error(data.detail || 'Erreur lors de la création du groupe');
+                }
+
+                showNotification('✅ Groupe créé avec succès !', 'success');
+                closeGroupModal();
+                await loadVulnerabilityGroups();
+            } catch (error) {
+                console.error('Erreur création groupe:', error);
+                showNotification('❌ Erreur création groupe: ' + error.message, 'error');
+            }
+        }
+
+        async function loadVulnerabilityGroups() {
+            try {
+                const response = await fetch(`${API_BASE}/vulnerability-groups`);
+                const data = await response.json();
+
+                const tbody = document.getElementById('groups-tbody');
+                if (!tbody) return;
+                
+                tbody.innerHTML = '';
+
+                if (!data.groups || data.groups.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="5" class="px-6 py-4 text-center text-gray-500">Aucun groupe créé</td></tr>';
+                    return;
+                }
+
+                data.groups.forEach(group => {
+                    const row = document.createElement('tr');
+                    const createdAt = new Date(group.created_at).toLocaleString('fr-FR');
+                    
+                    row.innerHTML = `
+                        <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">${group.name}</td>
+                        <td class="px-6 py-4 text-sm text-gray-500">${group.description || 'Aucune description'}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${group.vulnerability_count} vulnérabilité(s)</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${createdAt}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm">
+                            <button onclick="useGroup('${group.group_id}')" class="text-blue-600 hover:text-blue-900 mr-2" title="Utiliser ce groupe">
+                                <i class="fas fa-play"></i>
+                            </button>
+                            <button onclick="analyzeGroupFromGroupsView('${group.group_id}')" class="text-green-600 hover:text-green-900 mr-2" title="Analyser ce groupe">
+                                <i class="fas fa-brain"></i>
+                            </button>
+                            <button onclick="deleteGroup('${group.group_id}')" class="text-red-600 hover:text-red-900" title="Supprimer">
+                                <i class="fas fa-trash"></i>
+                            </button>
+                        </td>
+                    `;
+                    tbody.appendChild(row);
+                });
+            } catch (error) {
+                console.error('Erreur chargement groupes:', error);
+                const tbody = document.getElementById('groups-tbody');
+                if (tbody) {
+                    tbody.innerHTML = '<tr><td colspan="5" class="px-6 py-4 text-center text-red-500">Erreur lors du chargement</td></tr>';
+                }
+            }
+        }
+
+        async function useGroup(groupId) {
+            try {
+                const response = await fetch(`${API_BASE}/vulnerability-groups/${groupId}`);
+                const data = await response.json();
+                
+                // Sélectionner les vulnérabilités du groupe
+                const checkboxes = document.querySelectorAll('.vuln-select');
+                checkboxes.forEach(cb => {
+                    cb.checked = data.vulnerability_ids.includes(cb.value);
+                });
+                
+                showNotification(`✅ Groupe "${data.name}" chargé: ${data.vulnerability_ids.length} vulnérabilité(s) sélectionnée(s)`, 'success');
+                
+                // Aller à la vue vulnérabilités
+                showView('vulnerabilities');
+            } catch (error) {
+                console.error('Erreur utilisation groupe:', error);
+                showNotification('❌ Erreur: ' + error.message, 'error');
+            }
+        }
+
+        async function analyzeGroupFromGroupsView(groupId) {
+            // Rediriger vers la vue Analyse avec le groupe pré-sélectionné
+            showView('analysis');
+            // Attendre que la vue soit chargée puis sélectionner le groupe
+            setTimeout(() => {
+                const select = document.getElementById('analysis-group-select');
+                if (select) {
+                    select.value = groupId;
+                }
+            }, 100);
+        }
+
+        async function deleteGroup(groupId) {
+            if (!confirm('Êtes-vous sûr de vouloir supprimer ce groupe ?')) {
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_BASE}/vulnerability-groups/${groupId}`, {
+                    method: 'DELETE'
+                });
+
+                const data = await response.json();
+                
+                if (!response.ok) {
+                    throw new Error(data.detail || 'Erreur lors de la suppression');
+                }
+
+                showNotification('✅ Groupe supprimé avec succès', 'success');
+                await loadVulnerabilityGroups();
+            } catch (error) {
+                console.error('Erreur suppression groupe:', error);
+                showNotification('❌ Erreur suppression: ' + error.message, 'error');
+            }
+        }
+
+        // === ANALYSE DES VULNÉRABILITÉS ===
+        let selectedCVEsForAnalysis = [];
+
+        async function loadGroupsForAnalysis() {
+            try {
+                const response = await fetch(`${API_BASE}/vulnerability-groups`);
+                const data = await response.json();
+                
+                const select = document.getElementById('analysis-group-select');
+                if (!select) return;
+                
+                select.innerHTML = '<option value="">-- Sélectionner un groupe --</option>';
+                
+                if (data.groups && data.groups.length > 0) {
+                    data.groups.forEach(group => {
+                        const option = document.createElement('option');
+                        option.value = group.group_id;
+                        option.textContent = `${group.name} (${group.vulnerability_count} vulnérabilités)`;
+                        select.appendChild(option);
+                    });
+                }
+            } catch (error) {
+                console.error('Erreur chargement groupes pour analyse:', error);
+            }
+        }
+
+        async function loadScansForAnalysis() {
+            try {
+                const response = await fetch(`${API_BASE}/scans?limit=50`);
+                const data = await response.json();
+                
+                const select = document.getElementById('analysis-scan-select');
+                if (!select) return;
+                
+                select.innerHTML = '<option value="">-- Sélectionner un scan --</option>';
+                
+                if (data.scans && data.scans.length > 0) {
+                    data.scans.forEach(scan => {
+                        if (scan.status === 'completed') {
+                            const option = document.createElement('option');
+                            option.value = scan.scan_id;
+                            option.textContent = `${scan.target || scan.scan_id} - ${new Date(scan.started_at).toLocaleDateString('fr-FR')}`;
+                            select.appendChild(option);
+                        }
+                    });
+                }
+            } catch (error) {
+                console.error('Erreur chargement scans pour analyse:', error);
+            }
+        }
+
+        async function loadScanVulnerabilitiesForAnalysis() {
+            const scanId = document.getElementById('analysis-scan-select').value;
+            if (!scanId) {
+                document.getElementById('analysis-scan-vulns').innerHTML = '<p class="text-gray-500 text-sm">Sélectionnez un scan pour charger les vulnérabilités</p>';
+                document.getElementById('analyze-selected-btn').disabled = true;
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_BASE}/scans/${scanId}/vulnerabilities`);
+                const data = await response.json();
+                
+                const container = document.getElementById('analysis-scan-vulns');
+                selectedCVEsForAnalysis = [];
+                
+                if (!data.vulnerabilities || data.vulnerabilities.length === 0) {
+                    container.innerHTML = '<p class="text-gray-500 text-sm">Aucune vulnérabilité trouvée pour ce scan</p>';
+                    document.getElementById('analyze-selected-btn').disabled = true;
+                    return;
+                }
+
+                container.innerHTML = data.vulnerabilities.map(vuln => `
+                    <div class="flex items-center mb-2 p-2 hover:bg-gray-50 rounded">
+                        <input type="checkbox" 
+                               class="analysis-vuln-checkbox mr-2" 
+                               value="${vuln.vulnerability_id}"
+                               onchange="updateSelectedCVEsForAnalysis()">
+                        <span class="flex-1">
+                            <span class="font-medium">${vuln.vulnerability_id || vuln.name}</span>
+                            <span class="text-sm text-gray-500 ml-2">${vuln.severity || 'UNKNOWN'}</span>
+                            ${vuln.cvss_score ? `<span class="text-sm text-gray-500 ml-2">CVSS: ${vuln.cvss_score}</span>` : ''}
+                        </span>
+                    </div>
+                `).join('');
+                
+                updateSelectedCVEsForAnalysis();
+            } catch (error) {
+                console.error('Erreur chargement vulnérabilités:', error);
+                document.getElementById('analysis-scan-vulns').innerHTML = '<p class="text-red-500 text-sm">Erreur lors du chargement</p>';
+            }
+        }
+
+        function updateSelectedCVEsForAnalysis() {
+            const checkboxes = document.querySelectorAll('.analysis-vuln-checkbox:checked');
+            selectedCVEsForAnalysis = Array.from(checkboxes).map(cb => cb.value);
+            document.getElementById('analyze-selected-btn').disabled = selectedCVEsForAnalysis.length === 0;
+        }
+
+        async function analyzeSelectedGroup() {
+            const groupId = document.getElementById('analysis-group-select').value;
+            if (!groupId) {
+                showNotification('Veuillez sélectionner un groupe', 'warning');
+                return;
+            }
+
+            try {
+                showNotification('🔄 Analyse en cours...', 'info');
+                
+                const response = await fetch(`${API_BASE}/analyze/group/${groupId}`, {
+                    method: 'POST'
+                });
+
+                const data = await response.json();
+                
+                if (!response.ok) {
+                    throw new Error(data.detail || 'Erreur lors de l\'analyse');
+                }
+
+                showNotification(`✅ Analyse terminée: ${data.vulnerability_count} vulnérabilités analysées`, 'success');
+                await displayAnalysisResults(data.analysis_id);
+            } catch (error) {
+                console.error('Erreur analyse groupe:', error);
+                showNotification('❌ Erreur analyse: ' + error.message, 'error');
+            }
+        }
+
+        async function analyzeSelectedCVEs() {
+            if (selectedCVEsForAnalysis.length === 0) {
+                showNotification('Veuillez sélectionner au moins une vulnérabilité', 'warning');
+                return;
+            }
+
+            try {
+                showNotification('🔄 Analyse en cours...', 'info');
+                
+                const response = await fetch(`${API_BASE}/analyze/selected`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        vulnerability_ids: selectedCVEsForAnalysis,
+                        target_system: 'Unknown System'
+                    })
+                });
+
+                const data = await response.json();
+                
+                if (!response.ok) {
+                    throw new Error(data.detail || 'Erreur lors de l\'analyse');
+                }
+
+                showNotification(`✅ Analyse terminée: ${data.vulnerability_count} vulnérabilités analysées`, 'success');
+                await displayAnalysisResults(data.analysis_id);
+            } catch (error) {
+                console.error('Erreur analyse CVEs:', error);
+                showNotification('❌ Erreur analyse: ' + error.message, 'error');
+            }
+        }
+
+        async function displayAnalysisResults(analysisId) {
+            try {
+                const response = await fetch(`${API_BASE}/analysis/${analysisId}/vulnerabilities`);
+                const data = await response.json();
+                
+                const section = document.getElementById('analysis-results-section');
+                const content = document.getElementById('analysis-results-content');
+                
+                if (!data.vulnerabilities || data.vulnerabilities.length === 0) {
+                    content.innerHTML = '<p class="text-gray-500">Aucune vulnérabilité trouvée</p>';
+                    section.classList.remove('hidden');
+                    return;
+                }
+
+                content.innerHTML = `
+                    <div class="mb-4">
+                        <p class="text-sm text-gray-600">Analyse ID: <span class="font-mono">${analysisId}</span></p>
+                        <p class="text-sm text-gray-600">${data.count} vulnérabilité(s) analysée(s)</p>
+                    </div>
+                    <div class="space-y-3">
+                        ${data.vulnerabilities.map(vuln => `
+                            <div class="border rounded-lg p-4 hover:shadow-md transition-shadow">
+                                <div class="flex justify-between items-start mb-2">
+                                    <div>
+                                        <h4 class="font-semibold text-lg">${vuln.vulnerability_id || vuln.name || 'N/A'}</h4>
+                                        <p class="text-sm text-gray-600">${vuln.name || ''}</p>
+                                    </div>
+                                    <div class="flex gap-2">
+                                        <span class="px-2 py-1 rounded text-xs font-semibold ${
+                                            vuln.severity === 'CRITICAL' ? 'bg-red-100 text-red-800' :
+                                            vuln.severity === 'HIGH' ? 'bg-orange-100 text-orange-800' :
+                                            vuln.severity === 'MEDIUM' ? 'bg-yellow-100 text-yellow-800' :
+                                            'bg-gray-100 text-gray-800'
+                                        }">${vuln.severity || 'UNKNOWN'}</span>
+                                        <button onclick="correctSingleVulnerability('${vuln.vulnerability_id}')" 
+                                                class="bg-green-600 hover:bg-green-700 text-white px-3 py-1 rounded text-sm">
+                                            <i class="fas fa-wrench mr-1"></i>Corriger
+                                        </button>
+                                    </div>
+                                </div>
+                                ${vuln.impact_analysis ? `<p class="text-sm text-gray-700 mb-2">${vuln.impact_analysis}</p>` : ''}
+                                ${vuln.recommended_actions && vuln.recommended_actions.length > 0 ? `
+                                    <div class="mt-2">
+                                        <p class="text-sm font-semibold mb-1">Actions recommandées:</p>
+                                        <ul class="list-disc list-inside text-sm text-gray-600">
+                                            ${vuln.recommended_actions.map(action => `<li>${action}</li>`).join('')}
+                                        </ul>
+                                    </div>
+                                ` : ''}
+                                ${vuln.priority_score ? `<p class="text-xs text-gray-500 mt-2">Priorité: ${vuln.priority_score}/10</p>` : ''}
+                            </div>
+                        `).join('')}
+                    </div>
+                `;
+                
+                section.classList.remove('hidden');
+            } catch (error) {
+                console.error('Erreur affichage résultats:', error);
+                showNotification('❌ Erreur affichage résultats: ' + error.message, 'error');
+            }
+        }
+
+        // === CORRECTION DES VULNÉRABILITÉS ===
+        let selectedCVEsForCorrection = [];
+
+        async function loadAnalysesForCorrection() {
+            try {
+                const response = await fetch(`${API_BASE}/analysis-history?limit=50`);
+                const data = await response.json();
+                
+                const select = document.getElementById('correction-analysis-select');
+                if (!select) return;
+                
+                select.innerHTML = '<option value="">-- Sélectionner une analyse --</option>';
+                
+                if (data.analyses && data.analyses.length > 0) {
+                    data.analyses.forEach(analysis => {
+                        const option = document.createElement('option');
+                        option.value = analysis.analysis_id;
+                        const date = new Date(analysis.analyzed_at).toLocaleDateString('fr-FR');
+                        option.textContent = `${analysis.target_system} - ${analysis.vulnerability_count} vulnérabilités - ${date}`;
+                        select.appendChild(option);
+                    });
+                }
+            } catch (error) {
+                console.error('Erreur chargement analyses pour correction:', error);
+            }
+        }
+
+        async function loadAnalyzedVulnerabilities() {
+            const analysisId = document.getElementById('correction-analysis-select').value;
+            if (!analysisId) {
+                document.getElementById('correction-vulns-section').classList.add('hidden');
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_BASE}/analysis/${analysisId}/vulnerabilities`);
+                const data = await response.json();
+                
+                const section = document.getElementById('correction-vulns-section');
+                const list = document.getElementById('correction-vulns-list');
+                selectedCVEsForCorrection = [];
+                
+                if (!data.vulnerabilities || data.vulnerabilities.length === 0) {
+                    list.innerHTML = '<p class="text-gray-500">Aucune vulnérabilité trouvée</p>';
+                    section.classList.remove('hidden');
+                    return;
+                }
+
+                list.innerHTML = data.vulnerabilities.map(vuln => `
+                    <div class="flex items-center mb-3 p-3 border rounded-lg hover:bg-gray-50">
+                        <input type="checkbox" 
+                               class="correction-vuln-checkbox mr-3" 
+                               value="${vuln.vulnerability_id}"
+                               onchange="updateSelectedCVEsForCorrection()">
+                        <div class="flex-1">
+                            <div class="flex items-center gap-2 mb-1">
+                                <span class="font-semibold">${vuln.vulnerability_id || vuln.name || 'N/A'}</span>
+                                <span class="px-2 py-1 rounded text-xs font-semibold ${
+                                    vuln.severity === 'CRITICAL' ? 'bg-red-100 text-red-800' :
+                                    vuln.severity === 'HIGH' ? 'bg-orange-100 text-orange-800' :
+                                    vuln.severity === 'MEDIUM' ? 'bg-yellow-100 text-yellow-800' :
+                                    'bg-gray-100 text-gray-800'
+                                }">${vuln.severity || 'UNKNOWN'}</span>
+                                ${vuln.cvss_score ? `<span class="text-sm text-gray-600">CVSS: ${vuln.cvss_score}</span>` : ''}
+                            </div>
+                            ${vuln.impact_analysis ? `<p class="text-sm text-gray-600">${vuln.impact_analysis.substring(0, 100)}...</p>` : ''}
+                        </div>
+                    </div>
+                `).join('');
+                
+                section.classList.remove('hidden');
+                updateSelectedCVEsForCorrection();
+            } catch (error) {
+                console.error('Erreur chargement vulnérabilités analysées:', error);
+                showNotification('❌ Erreur chargement: ' + error.message, 'error');
+            }
+        }
+
+        function updateSelectedCVEsForCorrection() {
+            const checkboxes = document.querySelectorAll('.correction-vuln-checkbox:checked');
+            selectedCVEsForCorrection = Array.from(checkboxes).map(cb => cb.value);
+            document.getElementById('generate-scripts-btn').disabled = selectedCVEsForCorrection.length === 0;
+        }
+
+        function selectAllForCorrection() {
+            document.querySelectorAll('.correction-vuln-checkbox').forEach(cb => cb.checked = true);
+            updateSelectedCVEsForCorrection();
+        }
+
+        function deselectAllForCorrection() {
+            document.querySelectorAll('.correction-vuln-checkbox').forEach(cb => cb.checked = false);
+            updateSelectedCVEsForCorrection();
+        }
+
+        async function generateCorrectionScripts() {
+            if (selectedCVEsForCorrection.length === 0) {
+                showNotification('Veuillez sélectionner au moins une vulnérabilité', 'warning');
+                return;
+            }
+
+            try {
+                showNotification('🔄 Génération des scripts en cours...', 'info');
+                document.getElementById('generate-scripts-btn').disabled = true;
+                
+                const response = await fetch(`${API_BASE}/correct/selected`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        vulnerability_ids: selectedCVEsForCorrection,
+                        target_system: 'ubuntu'
+                    })
+                });
+
+                const data = await response.json();
+                
+                if (!response.ok) {
+                    throw new Error(data.detail || 'Erreur lors de la génération');
+                }
+
+                showNotification(`✅ Scripts générés: ${data.count}/${selectedCVEsForCorrection.length}`, 'success');
+                displayGeneratedScripts(data.scripts_generated);
+                document.getElementById('generate-scripts-btn').disabled = false;
+            } catch (error) {
+                console.error('Erreur génération scripts:', error);
+                showNotification('❌ Erreur génération: ' + error.message, 'error');
+                document.getElementById('generate-scripts-btn').disabled = false;
+            }
+        }
+
+        async function correctSingleVulnerability(vulnId) {
+            try {
+                showNotification('🔄 Génération du script en cours...', 'info');
+                
+                const response = await fetch(`${API_BASE}/correct/selected`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        vulnerability_ids: [vulnId],
+                        target_system: 'ubuntu'
+                    })
+                });
+
+                const data = await response.json();
+                
+                if (!response.ok) {
+                    throw new Error(data.detail || 'Erreur lors de la génération');
+                }
+
+                if (data.scripts_generated && data.scripts_generated.length > 0) {
+                    showNotification('✅ Script généré avec succès', 'success');
+                    displayGeneratedScripts(data.scripts_generated);
+                } else {
+                    showNotification('⚠️ Aucun script généré', 'warning');
+                }
+            } catch (error) {
+                console.error('Erreur génération script:', error);
+                showNotification('❌ Erreur génération: ' + error.message, 'error');
+            }
+        }
+
+        function displayGeneratedScripts(scripts) {
+            const section = document.getElementById('correction-scripts-section');
+            const content = document.getElementById('correction-scripts-content');
+            
+            if (!scripts || scripts.length === 0) {
+                content.innerHTML = '<p class="text-gray-500">Aucun script généré</p>';
+                section.classList.remove('hidden');
+                return;
+            }
+
+            content.innerHTML = scripts.map(script => {
+                if (script.error) {
+                    return `
+                        <div class="border border-red-300 rounded-lg p-4 bg-red-50">
+                            <h4 class="font-semibold text-red-800 mb-2">${script.vulnerability_id}</h4>
+                            <p class="text-sm text-red-600">Erreur: ${script.error}</p>
+                        </div>
+                    `;
+                }
+                
+                return `
+                    <div class="border rounded-lg p-4 bg-white shadow-sm">
+                        <div class="flex justify-between items-start mb-3">
+                            <div>
+                                <h4 class="font-semibold text-lg">${script.vulnerability_id}</h4>
+                                <p class="text-sm text-gray-600">Type: ${script.script_type} | Statut: ${script.validation_status} | Risque: ${script.risk_level}</p>
+                            </div>
+                        </div>
+                        <div class="mb-3">
+                            <label class="block text-sm font-semibold mb-1">Script de correction:</label>
+                            <pre class="bg-gray-100 p-3 rounded text-xs overflow-x-auto"><code>${script.script_content || 'N/A'}</code></pre>
+                        </div>
+                        ${script.rollback_script ? `
+                            <div class="mb-3">
+                                <label class="block text-sm font-semibold mb-1">Script de rollback:</label>
+                                <pre class="bg-gray-100 p-3 rounded text-xs overflow-x-auto"><code>${script.rollback_script}</code></pre>
+                            </div>
+                        ` : ''}
+                        <div class="flex gap-2 mt-3">
+                            <button onclick="copyToClipboard('${script.script_content?.replace(/'/g, "\\'") || ''}')" 
+                                    class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded text-sm">
+                                <i class="fas fa-copy mr-1"></i>Copier le script
+                            </button>
+                            ${script.rollback_script ? `
+                                <button onclick="copyToClipboard('${script.rollback_script.replace(/'/g, "\\'")}')" 
+                                        class="bg-gray-600 hover:bg-gray-700 text-white px-3 py-1 rounded text-sm">
+                                    <i class="fas fa-copy mr-1"></i>Copier le rollback
+                                </button>
+                            ` : ''}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+            
+            section.classList.remove('hidden');
+        }
+
+        function copyToClipboard(text) {
+            navigator.clipboard.writeText(text).then(() => {
+                showNotification('✅ Script copié dans le presse-papiers', 'success');
+            }).catch(err => {
+                showNotification('❌ Erreur copie: ' + err.message, 'error');
+            });
+        }
+
+        // === HISTORIQUE DES ANALYSES IA ===
+        async function loadAnalysisHistory() {
+            try {
+                const response = await fetch(`${API_BASE}/analysis-history?limit=50`);
+                const data = await response.json();
+
+                const tbody = document.getElementById('analysis-history-tbody');
+                if (!tbody) return;
+                
+                tbody.innerHTML = '';
+
+                if (!data.analyses || data.analyses.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="7" class="px-6 py-4 text-center text-gray-500">Aucune analyse IA effectuée</td></tr>';
+                    return;
+                }
+
+                data.analyses.forEach(analysis => {
+                    const row = document.createElement('tr');
+                    const analyzedAt = analysis.analyzed_at ? new Date(analysis.analyzed_at).toLocaleString('fr-FR') : 'N/A';
+                    const confidence = analysis.confidence_score ? `${(analysis.confidence_score * 100).toFixed(1)}%` : 'N/A';
+                    const processingTime = analysis.processing_time ? `${analysis.processing_time.toFixed(2)}s` : 'N/A';
+                    
+                    row.innerHTML = `
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${analyzedAt}</td>
+                        <td class="px-6 py-4 text-sm text-gray-900">${analysis.target_system}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${analysis.vulnerability_count} vulnérabilité(s)</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${analysis.ai_model_used || 'N/A'}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${confidence}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${processingTime}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm">
+                            <button onclick="viewAnalysisCVEs('${analysis.analysis_id}')" class="text-green-600 hover:text-green-900 mr-2" title="Voir les CVEs">
+                                <i class="fas fa-list"></i>
+                            </button>
+                            <button onclick="correctAnalysisCVEs('${analysis.analysis_id}')" class="text-purple-600 hover:text-purple-900 mr-2" title="Corriger les CVEs">
+                                <i class="fas fa-wrench"></i>
+                            </button>
+                            <button onclick="viewAnalysisDetails('${analysis.analysis_id}')" class="text-blue-600 hover:text-blue-900" title="Voir les détails">
+                                <i class="fas fa-eye"></i>
+                            </button>
+                        </td>
+                    `;
+                    tbody.appendChild(row);
+                });
+            } catch (error) {
+                console.error('Erreur chargement historique:', error);
+                const tbody = document.getElementById('analysis-history-tbody');
+                if (tbody) {
+                    tbody.innerHTML = '<tr><td colspan="7" class="px-6 py-4 text-center text-red-500">Erreur lors du chargement</td></tr>';
+                }
+            }
+        }
+
+        async function viewAnalysisCVEs(analysisId) {
+            // Rediriger vers la vue Correction avec l'analyse pré-sélectionnée
+            showView('correction');
+            setTimeout(() => {
+                const select = document.getElementById('correction-analysis-select');
+                if (select) {
+                    select.value = analysisId;
+                    loadAnalyzedVulnerabilities();
+                }
+            }, 100);
+        }
+
+        // Générer le plan de mises à jour optimisé
+        async function generateUpgradePlan() {
+            if (!currentScanId) {
+                showNotification('⚠️ Aucun scan sélectionné', 'warning');
+                return;
+            }
+            
+            // Afficher la section et le loader
+            const section = document.getElementById('upgrade-plan-section');
+            const loading = document.getElementById('upgrade-plan-loading');
+            const content = document.getElementById('upgrade-plan-content');
+            const error = document.getElementById('upgrade-plan-error');
+            
+            if (section) {
+                section.classList.remove('hidden');
+            }
+            if (loading) {
+                loading.classList.remove('hidden');
+            }
+            if (content) {
+                content.classList.add('hidden');
+            }
+            if (error) {
+                error.classList.add('hidden');
+            }
+            
+            try {
+                showNotification('🔄 Génération du plan de mises à jour...', 'info');
+                
+                // IMPORTANT : le plan de mises à jour est servi par dashboard_api (/api),
+                // pas par l'API v2 de scan. On appelle donc directement /api/...
+                const response = await fetch(`/api/scans/${currentScanId}/upgrade-plan`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'}
+                });
+                
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({ detail: 'Erreur inconnue' }));
+                    throw new Error(errorData.detail || `Erreur HTTP ${response.status}`);
+                }
+                
+                const planData = await response.json();
+                
+                // Masquer le loader et afficher le contenu
+                if (loading) {
+                    loading.classList.add('hidden');
+                }
+                if (content) {
+                    content.classList.remove('hidden');
+                }
+                
+                // Afficher le plan
+                displayUpgradePlan(planData);
+                
+                showNotification('✅ Plan de mises à jour généré avec succès', 'success');
+                
+            } catch (error) {
+                console.error('Erreur génération plan de mises à jour:', error);
+                
+                if (loading) {
+                    loading.classList.add('hidden');
+                }
+                if (error) {
+                    error.classList.remove('hidden');
+                    const errorMessage = document.getElementById('upgrade-plan-error-message');
+                    if (errorMessage) {
+                        errorMessage.textContent = error.message || 'Impossible de générer le plan de mises à jour. Veuillez réessayer.';
+                    }
+                }
+                
+                showNotification(`❌ Erreur: ${error.message}`, 'error');
+            }
+        }
+        
+        // Afficher le plan de mises à jour
+        function displayUpgradePlan(planData) {
+            // Afficher le résumé
+            const summaryDiv = document.getElementById('upgrade-plan-summary');
+            if (summaryDiv && planData.summary) {
+                const summary = planData.summary;
+                summaryDiv.innerHTML = `
+                    <h4 class="text-lg font-semibold text-gray-900 mb-3">
+                        <i class="fas fa-chart-line mr-2 text-orange-600"></i>
+                        Résumé du Plan
+                    </h4>
+                    <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                        <div class="bg-blue-50 p-3 rounded-lg">
+                            <div class="text-sm text-gray-600">Étapes totales</div>
+                            <div class="text-2xl font-bold text-blue-600">${summary.total_steps || planData.upgrade_plan?.length || 0}</div>
+                        </div>
+                        <div class="bg-green-50 p-3 rounded-lg">
+                            <div class="text-sm text-gray-600">Vulnérabilités corrigées</div>
+                            <div class="text-2xl font-bold text-green-600">${summary.total_vulnerabilities_fixed || 0}</div>
+                        </div>
+                        <div class="bg-purple-50 p-3 rounded-lg">
+                            <div class="text-sm text-gray-600">Temps estimé</div>
+                            <div class="text-lg font-bold text-purple-600">${summary.estimated_total_time || 'N/A'}</div>
+                        </div>
+                        <div class="bg-red-50 p-3 rounded-lg">
+                            <div class="text-sm text-gray-600">Redémarrage requis</div>
+                            <div class="text-lg font-bold text-red-600">${summary.requires_reboot ? 'Oui' : 'Non'}</div>
+                        </div>
+                    </div>
+                `;
+            }
+            
+            // Afficher les étapes
+            const stepsDiv = document.getElementById('upgrade-plan-steps');
+            if (stepsDiv && planData.upgrade_plan && Array.isArray(planData.upgrade_plan)) {
+                stepsDiv.innerHTML = planData.upgrade_plan.map((step, index) => {
+                    // Déterminer les classes CSS selon la priorité
+                    let borderClass, bgClass, textClass, badgeBgClass, badgeTextClass, iconClass, borderLeftClass;
+                    if (step.priority === 'CRITICAL') {
+                        borderClass = 'border-red-200';
+                        bgClass = 'bg-red-600';
+                        textClass = 'text-red-800';
+                        badgeBgClass = 'bg-red-100';
+                        badgeTextClass = 'text-red-800';
+                        iconClass = 'text-red-600';
+                        borderLeftClass = 'border-red-300';
+                    } else if (step.priority === 'HIGH') {
+                        borderClass = 'border-orange-200';
+                        bgClass = 'bg-orange-600';
+                        textClass = 'text-orange-800';
+                        badgeBgClass = 'bg-orange-100';
+                        badgeTextClass = 'text-orange-800';
+                        iconClass = 'text-orange-600';
+                        borderLeftClass = 'border-orange-300';
+                    } else if (step.priority === 'MEDIUM') {
+                        borderClass = 'border-yellow-200';
+                        bgClass = 'bg-yellow-600';
+                        textClass = 'text-yellow-800';
+                        badgeBgClass = 'bg-yellow-100';
+                        badgeTextClass = 'text-yellow-800';
+                        iconClass = 'text-yellow-600';
+                        borderLeftClass = 'border-yellow-300';
+                    } else {
+                        borderClass = 'border-blue-200';
+                        bgClass = 'bg-blue-600';
+                        textClass = 'text-blue-800';
+                        badgeBgClass = 'bg-blue-100';
+                        badgeTextClass = 'text-blue-800';
+                        iconClass = 'text-blue-600';
+                        borderLeftClass = 'border-blue-300';
+                    }
+                    
+                    return `
+                        <div class="bg-white rounded-lg border-2 ${borderClass} p-5 shadow-md">
+                            <div class="flex justify-between items-start mb-3">
+                                <div class="flex items-center">
+                                    <div class="${bgClass} text-white rounded-full w-10 h-10 flex items-center justify-center font-bold text-lg mr-4">
+                                        ${step.step || index + 1}
+                                    </div>
+                                    <div>
+                                        <h5 class="text-lg font-bold text-gray-900">
+                                            ${step.component_display_name || step.component || 'Composant inconnu'}
+                                        </h5>
+                                        <p class="text-sm text-gray-600">
+                                            <span class="font-semibold">${step.component || 'N/A'}</span>
+                                            ${step.current_version ? ` (actuel: ${step.current_version})` : ''}
+                                        </p>
+                                    </div>
+                                </div>
+                                <span class="px-3 py-1 ${badgeBgClass} ${badgeTextClass} rounded-full text-xs font-semibold">
+                                    ${step.priority || 'MEDIUM'}
+                                </span>
+                            </div>
+                            
+                            <div class="ml-14 space-y-2">
+                                <div class="flex items-center text-gray-700">
+                                    <i class="fas fa-arrow-right ${iconClass} mr-2"></i>
+                                    <span class="font-semibold">Version cible:</span>
+                                    <span class="ml-2 text-gray-900">${step.target_version || 'N/A'}</span>
+                                </div>
+                                
+                                <div class="flex items-center text-gray-700">
+                                    <i class="fas fa-shield-alt text-green-600 mr-2"></i>
+                                    <span class="font-semibold">Corrige ${step.vulnerability_count || step.vulnerabilities_fixed?.length || 0} vulnérabilité(s)</span>
+                                </div>
+                                
+                                ${step.command_hint ? `
+                                    <div class="bg-gray-50 p-3 rounded border border-gray-200 mt-2">
+                                        <div class="text-xs text-gray-500 mb-1">Commande suggérée:</div>
+                                        <code class="text-sm text-gray-800">${step.command_hint}</code>
+                                    </div>
+                                ` : ''}
+                                
+                                ${step.reason ? `
+                                    <div class="text-sm text-gray-600 mt-2 italic">
+                                        <i class="fas fa-info-circle mr-1"></i>
+                                        ${step.reason}
+                                    </div>
+                                ` : ''}
+                                
+                                ${step.estimated_duration ? `
+                                    <div class="text-sm text-gray-500 mt-1">
+                                        <i class="fas fa-clock mr-1"></i>
+                                        Durée estimée: ${step.estimated_duration}
+                                    </div>
+                                ` : ''}
+                                
+                                ${step.vulnerabilities_fixed && step.vulnerabilities_fixed.length > 0 ? `
+                                    <details class="mt-3">
+                                        <summary class="cursor-pointer text-sm font-semibold text-gray-700 hover:text-gray-900">
+                                            <i class="fas fa-list mr-1"></i>
+                                            Voir les CVE corrigées (${step.vulnerabilities_fixed.length})
+                                        </summary>
+                                        <div class="mt-2 pl-4 border-l-2 ${borderLeftClass}">
+                                            <div class="flex flex-wrap gap-2">
+                                                ${step.vulnerabilities_fixed.map(cve => `
+                                                    <span class="px-2 py-1 bg-gray-100 text-gray-700 rounded text-xs font-mono">${cve}</span>
+                                                `).join('')}
+                                            </div>
+                                        </div>
+                                    </details>
+                                ` : ''}
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+            }
+            
+            // Afficher les notes
+            const notesDiv = document.getElementById('upgrade-plan-notes');
+            if (notesDiv && planData.notes) {
+                notesDiv.innerHTML = `
+                    <h4 class="text-lg font-semibold text-gray-900 mb-2">
+                        <i class="fas fa-sticky-note mr-2 text-blue-600"></i>
+                        Notes et Recommandations
+                    </h4>
+                    <p class="text-gray-700 whitespace-pre-wrap">${planData.notes}</p>
+                `;
+            } else if (notesDiv) {
+                notesDiv.classList.add('hidden');
+            }
+        }
+        
+        // Fermer la section du plan de mises à jour
+        function closeUpgradePlan() {
+            const section = document.getElementById('upgrade-plan-section');
+            if (section) {
+                section.classList.add('hidden');
+            }
+        }
+
+        async function correctAnalysisCVEs(analysisId) {
+            // Récupérer les CVEs de l'analyse et les corriger directement
+            try {
+                showNotification('🔄 Récupération des CVEs...', 'info');
+                
+                const response = await fetch(`${API_BASE}/analysis/${analysisId}/vulnerabilities`);
+                const data = await response.json();
+                
+                if (!data.vulnerabilities || data.vulnerabilities.length === 0) {
+                    showNotification('⚠️ Aucune vulnérabilité trouvée pour cette analyse', 'warning');
+                    return;
+                }
+
+                const vulnerabilityIds = data.vulnerabilities.map(v => v.vulnerability_id);
+                
+                showNotification('🔄 Génération des scripts en cours...', 'info');
+                
+                const correctResponse = await fetch(`${API_BASE}/correct/selected`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        vulnerability_ids: vulnerabilityIds,
+                        target_system: 'ubuntu'
+                    })
+                });
+
+                const correctData = await correctResponse.json();
+                
+                if (!correctResponse.ok) {
+                    throw new Error(correctData.detail || 'Erreur lors de la génération');
+                }
+
+                // Rediriger vers la vue Correction pour afficher les scripts
+                showView('correction');
+                setTimeout(() => {
+                    displayGeneratedScripts(correctData.scripts_generated);
+                }, 100);
+                
+                showNotification(`✅ Scripts générés: ${correctData.count}/${vulnerabilityIds.length}`, 'success');
+            } catch (error) {
+                console.error('Erreur correction CVEs:', error);
+                showNotification('❌ Erreur correction: ' + error.message, 'error');
+            }
+        }
+
+        async function viewAnalysisDetails(analysisId) {
+            try {
+                const response = await fetch(`${API_BASE}/analysis-history/${analysisId}`);
+                const data = await response.json();
+                
+                // Afficher dans une modal ou alerte (pour l'instant)
+                let message = `Analyse ID: ${data.analysis_id}\n\n`;
+                message += `Cible: ${data.target_system}\n`;
+                message += `Vulnérabilités analysées: ${data.vulnerability_ids.length}\n`;
+                message += `Modèle IA: ${data.ai_model_used}\n`;
+                message += `Confiance: ${(data.confidence_score * 100).toFixed(1)}%\n`;
+                message += `Temps de traitement: ${data.processing_time.toFixed(2)}s\n\n`;
+                
+                if (data.analysis_summary && Object.keys(data.analysis_summary).length > 0) {
+                    message += `Résumé:\n${JSON.stringify(data.analysis_summary, null, 2)}\n\n`;
+                }
+                
+                if (data.remediation_plan && Object.keys(data.remediation_plan).length > 0) {
+                    message += `Plan de remédiation:\n${JSON.stringify(data.remediation_plan, null, 2)}`;
+                }
+                
+                alert(message);
+            } catch (error) {
+                console.error('Erreur chargement détails analyse:', error);
+                showNotification('❌ Erreur: ' + error.message, 'error');
             }
         }
     </script>

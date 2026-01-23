@@ -86,6 +86,19 @@ class ScanStatusResponse(BaseModel):
     estimated_time_remaining: Optional[int] = None
 
 
+class AIAnalyzeRequest(BaseModel):
+    """Requête d'analyse IA sur une sélection de vulnérabilités"""
+    vulnerability_ids: List[str]
+    target_system: Optional[str] = "Unknown System"
+
+
+class AIScriptRequest(BaseModel):
+    """Requête de génération de scripts sur une sélection de vulnérabilités"""
+    vulnerability_ids: List[str]
+    target_system: Optional[str] = "ubuntu"
+    script_type: str = Field(default="bash", description="Type de script à générer: bash ou ansible")
+
+
 # === INITIALISATION ===
 
 @app.on_event("startup")
@@ -110,6 +123,65 @@ async def shutdown_event():
     if supervisor_instance:
         await supervisor_instance.shutdown()
         logger.info("✅ Superviseur arrêté")
+
+
+def _get_workflow_search_dirs() -> List[Path]:
+    """Retourne la liste des répertoires où chercher les fichiers workflow"""
+    search_dirs: List[Path] = []
+    if WORKFLOWS_DIR.exists():
+        search_dirs.append(WORKFLOWS_DIR)
+    if ALT_WORKFLOWS_DIR.exists():
+        search_dirs.append(ALT_WORKFLOWS_DIR)
+    return search_dirs
+
+
+def find_vulnerabilities_by_ids(vulnerability_ids: List[str]) -> List[Dict[str, Any]]:
+    """
+    Recherche les vulnérabilités correspondantes aux IDs fournis
+    dans les fichiers de résultats de workflow.
+    """
+    if not vulnerability_ids:
+        return []
+
+    remaining = set(vulnerability_ids)
+    selected: List[Dict[str, Any]] = []
+
+    search_dirs = _get_workflow_search_dirs()
+
+    for workflows_dir in search_dirs:
+        for workflow_file in workflows_dir.glob("*.json"):
+            try:
+                with open(workflow_file, "r", encoding="utf-8") as f:
+                    workflow_data = json.load(f)
+
+                # On privilégie les vulnérabilités déjà analysées
+                vuln_sources: List[List[Dict[str, Any]]] = []
+                analysis_result = workflow_data.get("analysis_result") or {}
+                if analysis_result:
+                    vuln_sources.append(analysis_result.get("vulnerabilities", []))
+
+                scan_result = workflow_data.get("scan_result") or {}
+                if scan_result:
+                    vuln_sources.append(scan_result.get("vulnerabilities", []))
+
+                for vuln_list in vuln_sources:
+                    for vuln in vuln_list:
+                        vuln_dict = vuln if isinstance(vuln, dict) else (
+                            vuln.to_dict() if hasattr(vuln, "to_dict") else {}
+                        )
+                        vid = vuln_dict.get("vulnerability_id")
+                        if vid in remaining:
+                            selected.append(vuln_dict)
+                            remaining.remove(vid)
+                            if not remaining:
+                                return selected
+            except Exception as e:
+                logger.warning(f"Erreur lecture workflow {workflow_file}: {e}")
+                continue
+
+    if remaining:
+        logger.warning(f"Vulnérabilités non trouvées pour IDs: {list(remaining)}")
+    return selected
 
 
 # === ENDPOINTS REST ===
@@ -226,15 +298,22 @@ async def list_scans(limit: int = 50):
                             # C'est un scan terminé
                             scan_result = workflow_data.get("scan_result", {})
                             analysis_result = workflow_data.get("analysis_result", {})
-                            vulnerabilities_count = len(analysis_result.get("vulnerabilities", [])) if analysis_result else 0
                             
-                            # Utiliser le scan_id sauvegardé dans le workflow, sinon le workflow_id
-                            saved_scan_id = workflow_data.get("scan_id", workflow_id)
+                            # Compter les vulnérabilités : d'abord depuis analysis_result, sinon depuis scan_result
+                            vulnerabilities_count = 0
+                            if analysis_result:
+                                vulnerabilities_count = len(analysis_result.get("vulnerabilities", []))
+                            elif scan_result:
+                                vulnerabilities_count = len(scan_result.get("vulnerabilities", []))
+                            
+                            # Pour les scans terminés, utiliser le workflow_id comme scan_id
+                            # car le scan_id UUID n'est pas sauvegardé dans le JSON
+                            saved_scan_id = workflow_data.get("scan_id") or workflow_id
                             
                             scans_list.append({
-                                "scan_id": saved_scan_id,  # Utiliser le scan_id original si disponible
+                                "scan_id": workflow_id,  # Utiliser workflow_id comme scan_id pour les scans terminés
                                 "target": workflow_data.get("target", "N/A"),
-                                "scan_type": workflow_data.get("scan_type", "unknown"),
+                                "scan_type": workflow_data.get("scan_type", workflow_data.get("workflow_type", "unknown")),
                                 "status": "completed",
                                 "progress": 100,
                                 "current_step": "Terminé",
@@ -257,6 +336,148 @@ async def list_scans(limit: int = 50):
         }
     except Exception as e:
         logger.error(f"Erreur liste scans: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/v2/ai/analyze")
+async def analyze_selected_vulnerabilities(request: AIAnalyzeRequest):
+    """
+    Analyse IA d'une sélection de vulnérabilités choisies par l'utilisateur.
+    L'utilisateur est maître de la sélection (1 ou plusieurs CVE).
+    """
+    global supervisor_instance
+
+    try:
+        if not request.vulnerability_ids:
+            raise HTTPException(status_code=400, detail="Aucune vulnérabilité sélectionnée")
+
+        vulnerabilities = find_vulnerabilities_by_ids(request.vulnerability_ids)
+        if not vulnerabilities:
+            raise HTTPException(status_code=404, detail="Vulnérabilités non trouvées")
+
+        # Initialiser le superviseur si nécessaire
+        if supervisor_instance is None:
+            try:
+                config = get_config()
+                supervisor_instance = Supervisor(config)
+                logger.info("✅ Superviseur initialisé à la demande pour analyse IA")
+            except Exception as e:
+                logger.error(f"❌ Erreur initialisation superviseur: {e}")
+                raise HTTPException(status_code=500, detail=f"Erreur d'initialisation du superviseur: {e}")
+
+        # Lancer l'analyse via le superviseur
+        analysis_result = await supervisor_instance.analyze_vulnerabilities(
+            vulnerabilities_data=vulnerabilities,
+            target_system=request.target_system or "Unknown System"
+        )
+
+        # Sauvegarder dans l'historique
+        try:
+            import sqlite3
+            from pathlib import Path
+            
+            BASE_DIR = Path(__file__).parent.parent.parent
+            DB_PATH = BASE_DIR / "data" / "database" / "vulnerability_agent.db"
+            
+            if DB_PATH.exists():
+                conn = sqlite3.connect(str(DB_PATH))
+                cursor = conn.cursor()
+                
+                analysis_dict = analysis_result.to_dict() if hasattr(analysis_result, "to_dict") else analysis_result
+                analysis_id = analysis_dict.get("analysis_id", f"analysis_{uuid.uuid4().hex[:12]}")
+                vulnerability_ids = [v.get("vulnerability_id", "") for v in vulnerabilities if isinstance(v, dict) and v.get("vulnerability_id")]
+                
+                cursor.execute("""
+                    INSERT OR REPLACE INTO analysis_history (
+                        analysis_id, target_system, vulnerability_ids, ai_model_used,
+                        analysis_summary, remediation_plan, confidence_score, processing_time
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    analysis_id,
+                    request.target_system or "Unknown System",
+                    json.dumps(vulnerability_ids),
+                    analysis_dict.get("ai_model_used", "unknown"),
+                    json.dumps(analysis_dict.get("analysis_summary", {})),
+                    json.dumps(analysis_dict.get("remediation_plan", {})),
+                    analysis_dict.get("confidence_score", 0.0),
+                    analysis_dict.get("processing_time", 0.0)
+                ))
+                
+                conn.commit()
+                conn.close()
+                logger.info(f"✅ Analyse sauvegardée dans l'historique: {analysis_id}")
+        except Exception as e:
+            logger.warning(f"⚠️ Impossible de sauvegarder l'analyse dans l'historique: {e}")
+
+        # Retourner le résultat complet (dict)
+        return analysis_result.to_dict() if hasattr(analysis_result, "to_dict") else analysis_result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Erreur analyse IA sélection vulnérabilités: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/v2/ai/generate-scripts")
+async def generate_scripts_for_vulnerabilities(request: AIScriptRequest):
+    """
+    Génère des scripts de remédiation pour une sélection de vulnérabilités.
+    L'utilisateur choisit librement les CVE et le type de script (bash / ansible).
+    """
+    global supervisor_instance
+
+    try:
+        if not request.vulnerability_ids:
+            raise HTTPException(status_code=400, detail="Aucune vulnérabilité sélectionnée")
+
+        vulnerabilities = find_vulnerabilities_by_ids(request.vulnerability_ids)
+        if not vulnerabilities:
+            raise HTTPException(status_code=404, detail="Vulnérabilités non trouvées")
+
+        # Initialiser le superviseur si nécessaire
+        if supervisor_instance is None:
+            try:
+                config = get_config()
+                supervisor_instance = Supervisor(config)
+                logger.info("✅ Superviseur initialisé à la demande pour génération de scripts")
+            except Exception as e:
+                logger.error(f"❌ Erreur initialisation superviseur: {e}")
+                raise HTTPException(status_code=500, detail=f"Erreur d'initialisation du superviseur: {e}")
+
+        # Paramètres du workflow : on passe directement les vulnérabilités sélectionnées
+        parameters: Dict[str, Any] = {
+            "vulnerabilities_data": vulnerabilities,
+            "target_system": request.target_system or "ubuntu",
+            "script_type": request.script_type or "bash",
+        }
+
+        # Lancer un workflow dédié de génération de scripts
+        workflow_id = await supervisor_instance.start_workflow(
+            workflow_type=WorkflowType.GENERATE_SCRIPTS,
+            target=request.target_system or "ubuntu",
+            parameters=parameters,
+        )
+
+        workflow_result = await supervisor_instance.wait_for_workflow(workflow_id)
+
+        scripts = []
+        if workflow_result.script_results:
+            scripts = [
+                script.to_dict() if hasattr(script, "to_dict") else script
+                for script in workflow_result.script_results
+            ]
+
+        return {
+            "workflow_id": workflow_id,
+            "scripts_generated": len(scripts),
+            "scripts": scripts,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Erreur génération scripts IA sélection vulnérabilités: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -772,6 +993,34 @@ async def generate_pdf_report(scan_id: str, workflow_id: str) -> bytes:
         
         scan_result = workflow_data.get('scan_result', {})
         analysis_result = workflow_data.get('analysis_result', {})
+
+        # Calcul robuste du nombre de vulnérabilités
+        total_vulns = workflow_data.get('total_vulnerabilities', 0)
+        if not total_vulns:
+            # Recalculer depuis les données détaillées si disponibles
+            if isinstance(scan_result, dict):
+                vuln_list = scan_result.get('vulnerabilities', [])
+                if isinstance(vuln_list, list) and vuln_list:
+                    total_vulns = len(vuln_list)
+            if not total_vulns and isinstance(analysis_result, dict):
+                vuln_list = analysis_result.get('vulnerabilities', [])
+                if isinstance(vuln_list, list) and vuln_list:
+                    total_vulns = len(vuln_list)
+
+        # Calcul robuste des vulnérabilités critiques
+        critical_vulns = workflow_data.get('critical_vulnerabilities', 0)
+        if critical_vulns == 0 and total_vulns:
+            all_vulns = []
+            if isinstance(scan_result, dict):
+                all_vulns = scan_result.get('vulnerabilities', []) or []
+            if (not all_vulns) and isinstance(analysis_result, dict):
+                all_vulns = analysis_result.get('vulnerabilities', []) or []
+
+            if isinstance(all_vulns, list):
+                critical_vulns = sum(
+                    1 for v in all_vulns
+                    if isinstance(v, dict) and v.get('severity', '').upper() == 'CRITICAL'
+                )
         
         summary_data = [
             ['Cible scannée', workflow_data.get('target', 'N/A')],
@@ -779,8 +1028,8 @@ async def generate_pdf_report(scan_id: str, workflow_id: str) -> bytes:
             ['Date de début', workflow_data.get('started_at', 'N/A')],
             ['Date de fin', workflow_data.get('completed_at', 'N/A')],
             ['Durée totale', f"{workflow_data.get('duration', 0):.1f} secondes"],
-            ['Vulnérabilités détectées', workflow_data.get('total_vulnerabilities', 0)],
-            ['Vulnérabilités critiques', workflow_data.get('critical_vulnerabilities', 0)],
+            ['Vulnérabilités détectées', total_vulns],
+            ['Vulnérabilités critiques', critical_vulns],
             ['Scripts générés', workflow_data.get('scripts_generated', 0)]
         ]
         
@@ -799,6 +1048,83 @@ async def generate_pdf_report(scan_id: str, workflow_id: str) -> bytes:
         story.append(summary_table)
         story.append(Spacer(1, 0.3*inch))
         
+        # Statistiques détaillées par sévérité
+        all_vulns = []
+        if isinstance(scan_result, dict):
+            all_vulns = scan_result.get('vulnerabilities', []) or []
+        if not all_vulns and isinstance(analysis_result, dict):
+            all_vulns = analysis_result.get('vulnerabilities', []) or []
+        
+        if all_vulns:
+            # Compter par sévérité
+            severity_counts = {'CRITICAL': 0, 'HIGH': 0, 'MEDIUM': 0, 'LOW': 0, 'UNKNOWN': 0}
+            for vuln in all_vulns:
+                if isinstance(vuln, dict):
+                    sev = vuln.get('severity', 'UNKNOWN').upper()
+                    severity_counts[sev] = severity_counts.get(sev, 0) + 1
+            
+            story.append(Paragraph("Distribution par Sévérité", heading_style))
+            severity_data = [
+                ['Sévérité', 'Nombre', 'Pourcentage'],
+                ['CRITICAL', severity_counts['CRITICAL'], f"{(severity_counts['CRITICAL']/total_vulns*100):.1f}%" if total_vulns > 0 else "0%"],
+                ['HIGH', severity_counts['HIGH'], f"{(severity_counts['HIGH']/total_vulns*100):.1f}%" if total_vulns > 0 else "0%"],
+                ['MEDIUM', severity_counts['MEDIUM'], f"{(severity_counts['MEDIUM']/total_vulns*100):.1f}%" if total_vulns > 0 else "0%"],
+                ['LOW', severity_counts['LOW'], f"{(severity_counts['LOW']/total_vulns*100):.1f}%" if total_vulns > 0 else "0%"],
+            ]
+            
+            severity_table = Table(severity_data, colWidths=[2*inch, 2*inch, 3*inch])
+            severity_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1E40AF')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, 0), 11),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                ('BACKGROUND', (0, 1), (0, 1), colors.HexColor('#FEE2E2')),
+                ('BACKGROUND', (0, 2), (0, 2), colors.HexColor('#FED7AA')),
+                ('BACKGROUND', (0, 3), (0, 3), colors.HexColor('#FEF3C7')),
+                ('BACKGROUND', (0, 4), (0, 4), colors.HexColor('#D1FAE5')),
+                ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+                ('FONTSIZE', (0, 1), (-1, -1), 10),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black),
+                ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#F9FAFB')])
+            ]))
+            story.append(severity_table)
+            story.append(Spacer(1, 0.3*inch))
+            
+            # Services détectés
+            if isinstance(scan_result, dict):
+                services = scan_result.get('services', [])
+                if services:
+                    story.append(Paragraph("Services Détectés", heading_style))
+                    services_data = [['Port', 'Service', 'Version', 'État']]
+                    for svc in services[:10]:  # Limiter à 10 services
+                        if isinstance(svc, dict):
+                            services_data.append([
+                                str(svc.get('port', 'N/A')),
+                                svc.get('service_name', 'N/A'),
+                                svc.get('version', 'N/A'),
+                                svc.get('state', 'N/A')
+                            ])
+                    
+                    if len(services_data) > 1:
+                        services_table = Table(services_data, colWidths=[1*inch, 2*inch, 2*inch, 2*inch])
+                        services_table.setStyle(TableStyle([
+                            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1E40AF')),
+                            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                            ('FONTSIZE', (0, 0), (-1, 0), 10),
+                            ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+                            ('FONTSIZE', (0, 1), (-1, -1), 9),
+                            ('GRID', (0, 0), (-1, -1), 1, colors.black),
+                            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#F9FAFB')])
+                        ]))
+                        story.append(services_table)
+                        story.append(Spacer(1, 0.3*inch))
+        
+        story.append(PageBreak())
+        
         # Vulnérabilités détectées
         vulnerabilities = []
         if scan_result:
@@ -808,8 +1134,21 @@ async def generate_pdf_report(scan_id: str, workflow_id: str) -> bytes:
         
         if vulnerabilities:
             story.append(Paragraph("Vulnérabilités Détectées", heading_style))
+            story.append(Paragraph(
+                f"Total: {len(vulnerabilities)} vulnérabilité(s) détectée(s). "
+                f"Affichage des {min(20, len(vulnerabilities))} premières.",
+                styles['Normal']
+            ))
+            story.append(Spacer(1, 0.2*inch))
             
-            for i, vuln in enumerate(vulnerabilities[:20], 1):  # Limiter à 20 pour le PDF
+            # Trier par CVSS score décroissant
+            sorted_vulns = sorted(
+                [v for v in vulnerabilities if isinstance(v, dict)],
+                key=lambda x: x.get('cvss_score', 0) or 0,
+                reverse=True
+            )
+            
+            for i, vuln in enumerate(sorted_vulns[:20], 1):  # Limiter à 20 pour le PDF
                 severity = vuln.get('severity', 'UNKNOWN')
                 bg_color = {
                     'CRITICAL': colors.HexColor('#FEE2E2'),
@@ -826,7 +1165,7 @@ async def generate_pdf_report(scan_id: str, workflow_id: str) -> bytes:
                     ['Description', vuln.get('description', 'N/A')[:200]]
                 ]
                 
-                vuln_table = Table(vuln_data, colWidths=[2*inch, 5*inch])
+                vuln_table = Table(vuln_data, colWidths=[1.5*inch, 5.5*inch])
                 vuln_table.setStyle(TableStyle([
                     ('BACKGROUND', (0, 0), (0, -1), colors.HexColor('#F3F4F6')),
                     ('BACKGROUND', (1, 0), (1, -1), bg_color),
@@ -837,21 +1176,63 @@ async def generate_pdf_report(scan_id: str, workflow_id: str) -> bytes:
                     ('FONTSIZE', (0, 0), (-1, -1), 9),
                     ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
                     ('TOPPADDING', (0, 0), (-1, -1), 6),
-                    ('GRID', (0, 0), (-1, -1), 1, colors.black)
+                    ('GRID', (0, 0), (-1, -1), 1, colors.black),
+                    ('VALIGN', (0, 0), (-1, -1), 'TOP')
                 ]))
                 
                 story.append(vuln_table)
                 story.append(Spacer(1, 0.2*inch))
         
-        # Plan de remédiation
-        if workflow_data.get('scripts_generated', 0) > 0:
+        # Analyse IA (si disponible)
+        if analysis_result and isinstance(analysis_result, dict):
             story.append(PageBreak())
-            story.append(Paragraph("Plan de Remédiation", heading_style))
+            story.append(Paragraph("Analyse IA", heading_style))
+            
+            analysis_summary = analysis_result.get('analysis_summary', {})
+            if analysis_summary:
+                if isinstance(analysis_summary, dict):
+                    story.append(Paragraph("Résumé de l'analyse:", styles['Heading3']))
+                    for key, value in list(analysis_summary.items())[:5]:
+                        story.append(Paragraph(f"<b>{key}:</b> {str(value)[:200]}", styles['Normal']))
+                        story.append(Spacer(1, 0.1*inch))
+            
+            remediation_plan = analysis_result.get('remediation_plan', {})
+            if remediation_plan and isinstance(remediation_plan, dict):
+                story.append(Paragraph("Plan de Remédiation Recommandé", styles['Heading3']))
+                for key, value in list(remediation_plan.items())[:5]:
+                    story.append(Paragraph(f"<b>{key}:</b> {str(value)[:200]}", styles['Normal']))
+                    story.append(Spacer(1, 0.1*inch))
+        
+        # Plan de remédiation (Scripts)
+        script_results = workflow_data.get('script_results', [])
+        if script_results and len(script_results) > 0:
+            story.append(PageBreak())
+            story.append(Paragraph("Scripts de Remédiation Générés", heading_style))
             story.append(Paragraph(
-                f"{workflow_data.get('scripts_generated', 0)} scripts de correction ont été générés. "
-                "Consultez le dashboard pour les détails complets.",
+                f"{len(script_results)} script(s) de correction ont été généré(s).",
                 styles['Normal']
             ))
+            story.append(Spacer(1, 0.2*inch))
+            
+            for i, script in enumerate(script_results[:5], 1):  # Limiter à 5 scripts
+                if isinstance(script, dict):
+                    script_data = [
+                        ['Script ID', script.get('script_id', 'N/A')],
+                        ['Vulnérabilité', script.get('vulnerability_id', 'N/A')],
+                        ['Type', script.get('script_type', 'N/A')],
+                        ['Système cible', script.get('target_system', 'N/A')],
+                    ]
+                    script_table = Table(script_data, colWidths=[2*inch, 5*inch])
+                    script_table.setStyle(TableStyle([
+                        ('BACKGROUND', (0, 0), (0, -1), colors.HexColor('#F3F4F6')),
+                        ('TEXTCOLOR', (0, 0), (-1, -1), colors.black),
+                        ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                        ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
+                        ('FONTSIZE', (0, 0), (-1, -1), 9),
+                        ('GRID', (0, 0), (-1, -1), 1, colors.black)
+                    ]))
+                    story.append(script_table)
+                    story.append(Spacer(1, 0.2*inch))
         
         # Footer
         story.append(Spacer(1, 0.5*inch))

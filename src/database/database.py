@@ -929,77 +929,77 @@ class Database:
             logger.error(f"Erreur nettoyage données: {e}")
             raise DatabaseError(f"Erreur lors du nettoyage: {str(e)}")
 
-            # === OPÉRATIONS DE MAINTENANCE ===
+    # === OPÉRATIONS DE MAINTENANCE ===
 
-        def vacuum(self):
-            """
-            Optimise la base de données (VACUUM)
+    def vacuum(self):
+        """
+        Optimise la base de données (VACUUM)
 
-            Récupère l'espace libre et optimise les performances
-            """
-            try:
-                conn = self.get_connection()
-                cursor = conn.execute("VACUUM")
-                cursor.close()
-                logger.info("VACUUM exécuté avec succès")
-            except Exception as e:
-                logger.error(f"Erreur VACUUM: {e}")
-                raise DatabaseError(f"Erreur d'optimisation: {str(e)}")
+        Récupère l'espace libre et optimise les performances
+        """
+        try:
+            conn = self.get_connection()
+            cursor = conn.execute("VACUUM")
+            cursor.close()
+            logger.info("VACUUM exécuté avec succès")
+        except Exception as e:
+            logger.error(f"Erreur VACUUM: {e}")
+            raise DatabaseError(f"Erreur d'optimisation: {str(e)}")
 
-        def analyze(self):
-            """
-            Met à jour les statistiques de la base (ANALYZE)
+    def analyze(self):
+        """
+        Met à jour les statistiques de la base (ANALYZE)
 
-            Améliore les performances des requêtes
-            """
-            try:
-                conn = self.get_connection()
-                cursor = conn.execute("ANALYZE")
-                cursor.close()
-                logger.info("ANALYZE exécuté avec succès")
-            except Exception as e:
-                logger.error(f"Erreur ANALYZE: {e}")
-                raise DatabaseError(f"Erreur d'analyse: {str(e)}")
+        Améliore les performances des requêtes
+        """
+        try:
+            conn = self.get_connection()
+            cursor = conn.execute("ANALYZE")
+            cursor.close()
+            logger.info("ANALYZE exécuté avec succès")
+        except Exception as e:
+            logger.error(f"Erreur ANALYZE: {e}")
+            raise DatabaseError(f"Erreur d'analyse: {str(e)}")
 
-        def reindex(self):
-            """
-            Reconstruit tous les index de la base
+    def reindex(self):
+        """
+        Reconstruit tous les index de la base
 
-            Utile après de nombreuses modifications
-            """
-            try:
-                conn = self.get_connection()
-                cursor = conn.execute("REINDEX")
-                cursor.close()
-                logger.info("REINDEX exécuté avec succès")
-            except Exception as e:
-                logger.error(f"Erreur REINDEX: {e}")
-                raise DatabaseError(f"Erreur de réindexation: {str(e)}")
+        Utile après de nombreuses modifications
+        """
+        try:
+            conn = self.get_connection()
+            cursor = conn.execute("REINDEX")
+            cursor.close()
+            logger.info("REINDEX exécuté avec succès")
+        except Exception as e:
+            logger.error(f"Erreur REINDEX: {e}")
+            raise DatabaseError(f"Erreur de réindexation: {str(e)}")
 
-        def optimize(self):
-            """
-            Optimisation complète de la base de données
+    def optimize(self):
+        """
+        Optimisation complète de la base de données
 
-            Exécute VACUUM, ANALYZE et REINDEX
-            """
-            logger.info("Début optimisation de la base de données")
-            start_time = time.time()
+        Exécute VACUUM, ANALYZE et REINDEX
+        """
+        logger.info("Début optimisation de la base de données")
+        start_time = time.time()
 
-            try:
-                self.vacuum()
-                self.analyze()
-                self.reindex()
+        try:
+            self.vacuum()
+            self.analyze()
+            self.reindex()
 
-                duration = time.time() - start_time
-                logger.info(f"Optimisation terminée en {duration:.2f}s")
+            duration = time.time() - start_time
+            logger.info(f"Optimisation terminée en {duration:.2f}s")
 
-            except Exception as e:
-                logger.error(f"Erreur optimisation: {e}")
-                raise
+        except Exception as e:
+            logger.error(f"Erreur optimisation: {e}")
+            raise
 
-            # === BACKUP ET RESTAURATION ===
+    # === BACKUP ET RESTAURATION ===
 
-        def backup(self, backup_path: str = None, compress: bool = True) -> str:
+    def backup(self, backup_path: str = None, compress: bool = True) -> str:
             """
             Crée une sauvegarde de la base de données
 
@@ -1028,7 +1028,7 @@ class Database:
                 logger.error(f"Erreur sauvegarde: {e}")
                 raise DatabaseError(f"Erreur de sauvegarde: {str(e)}")
 
-        def restore(self, backup_path: str, verify_integrity: bool = True) -> bool:
+    def restore(self, backup_path: str, verify_integrity: bool = True) -> bool:
             """
             Restaure la base depuis une sauvegarde
 
@@ -1064,7 +1064,7 @@ class Database:
                 logger.error(f"Erreur restauration: {e}")
                 raise DatabaseError(f"Erreur de restauration: {str(e)}")
 
-        def auto_backup(self) -> bool:
+    def auto_backup(self) -> bool:
             """
             Sauvegarde automatique selon la configuration
 
@@ -1094,7 +1094,7 @@ class Database:
                 logger.warning(f"Erreur sauvegarde automatique: {e}")
                 return False
 
-        def _cleanup_old_backups(self):
+    def _cleanup_old_backups(self):
             """Nettoie les anciennes sauvegardes"""
             try:
                 retention_days = self.config.get('backup_retention_days', 30)
@@ -1113,9 +1113,9 @@ class Database:
             except Exception as e:
                 logger.warning(f"Erreur nettoyage sauvegardes: {e}")
 
-            # === STATISTIQUES ET MONITORING ===
+    # === STATISTIQUES ET MONITORING ===
 
-        def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> Dict[str, Any]:
             """
             Retourne les statistiques de la base de données
 
@@ -1166,7 +1166,7 @@ class Database:
                 logger.error(f"Erreur récupération statistiques: {e}")
                 return self.stats.copy()
 
-        def health_check(self) -> Dict[str, Any]:
+    def health_check(self) -> Dict[str, Any]:
             """
             Vérifie la santé de la base de données
 
@@ -1224,9 +1224,9 @@ class Database:
 
             return health_report
 
-            # === GESTION DES CONNEXIONS ===
+    # === GESTION DES CONNEXIONS ===
 
-        def close_all_connections(self):
+    def close_all_connections(self):
             """Ferme toutes les connexions du pool"""
             with self._connection_lock:
                 for conn in self._connections.values():
@@ -1238,7 +1238,7 @@ class Database:
                 self._connections.clear()
                 logger.info("Toutes les connexions fermées")
 
-        def close(self):
+    def close(self):
             """Ferme le gestionnaire de base de données"""
             logger.info("Fermeture du gestionnaire de base de données")
 
@@ -1254,17 +1254,17 @@ class Database:
 
             logger.info("Gestionnaire de base de données fermé")
 
-        def __enter__(self):
+    def __enter__(self):
             """Support du gestionnaire de contexte"""
             return self
 
-        def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(self, exc_type, exc_val, exc_tb):
             """Fermeture automatique avec gestionnaire de contexte"""
             self.close()
 
-            # === MÉTHODES AVANCÉES ===
+    # === MÉTHODES AVANCÉES ===
 
-        def execute_custom_query(
+    def execute_custom_query(
                 self,
                 query: str,
                 params: Tuple = (),
@@ -1300,7 +1300,7 @@ class Database:
                 logger.error(f"Erreur requête personnalisée: {e}")
                 raise DatabaseError(f"Erreur d'exécution: {str(e)}")
 
-        def bulk_insert(self, table: str, data_list: List[Dict[str, Any]]) -> int:
+    def bulk_insert(self, table: str, data_list: List[Dict[str, Any]]) -> int:
             """
             Insertion en lot pour de meilleures performances
 
@@ -1356,7 +1356,7 @@ class Database:
                 logger.error(f"Erreur insertion en lot {table}: {e}")
                 raise DatabaseError(f"Erreur d'insertion en lot: {str(e)}")
 
-        def get_table_info(self, table: str) -> Dict[str, Any]:
+    def get_table_info(self, table: str) -> Dict[str, Any]:
             """
             Récupère les informations sur une table
 
@@ -1418,79 +1418,82 @@ class Database:
                 logger.error(f"Erreur info table {table}: {e}")
                 return {"error": str(e)}
 
-        # === FONCTIONS UTILITAIRES ===
+    # === FONCTIONS UTILITAIRES ===
 
-        def create_database_manager(config: Dict[str, Any] = None) -> Database:
-            """
-            Factory pour créer un gestionnaire de base de données
 
-            Args:
-                config: Configuration personnalisée
+def create_database_manager(config: Dict[str, Any] = None) -> Database:
+    """
+    Factory pour créer un gestionnaire de base de données
 
-            Returns:
-                Database: Instance configurée
-            """
-            return Database(config)
+    Args:
+        config: Configuration personnalisée
 
-        async def async_database_operation(db: Database, operation_func, *args, **kwargs):
-            """
-            Exécute une opération de base de données de manière asynchrone
+    Returns:
+        Database: Instance configurée
+    """
+    return Database(config)
 
-            Args:
-                db: Instance de base de données
-                operation_func: Fonction à exécuter
-                *args, **kwargs: Arguments pour la fonction
 
-            Returns:
-                Résultat de l'opération
-            """
-            loop = asyncio.get_event_loop()
-            return await loop.run_in_executor(None, operation_func, *args, **kwargs)
+async def async_database_operation(db: Database, operation_func, *args, **kwargs):
+    """
+    Exécute une opération de base de données de manière asynchrone
 
-        if __name__ == "__main__":
-            # Tests et exemples d'utilisation
-            def test_database():
-                print("Test du gestionnaire de base de données")
+    Args:
+        db: Instance de base de données
+        operation_func: Fonction à exécuter
+        *args, **kwargs: Arguments pour la fonction
 
-                # Créer une base de données de test
-                config = {
-                    "database_path": "test_database.db",
-                    "backup_enabled": True,
-                    "cache_size": 5000
-                }
+    Returns:
+        Résultat de l'opération
+    """
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, operation_func, *args, **kwargs)
 
-                with Database(config) as db:
-                    # Créer les tables
-                    db.create_tables()
-                    print("✅ Tables créées")
 
-                    # Test d'insertion
-                    test_data = {
-                        "scan_id": "test_scan_001",
-                        "target": "192.168.1.100",
-                        "scan_type": "quick",
-                        "status": "completed"
-                    }
+if __name__ == "__main__":
+    # Tests et exemples d'utilisation
+    def test_database():
+        print("Test du gestionnaire de base de données")
 
-                    scan_id = db.insert("scans", test_data)
-                    print(f"✅ Scan inséré: ID {scan_id}")
+        # Créer une base de données de test
+        config = {
+            "database_path": "test_database.db",
+            "backup_enabled": True,
+            "cache_size": 5000
+        }
 
-                    # Test de sélection
-                    scans = db.select("scans", where={"target": "192.168.1.100"})
-                    print(f"✅ Scans trouvés: {len(scans)}")
+        with Database(config) as db:
+            # Créer les tables
+            db.create_tables()
+            print("✅ Tables créées")
 
-                    # Test des statistiques
-                    stats = db.get_stats()
-                    print(f"✅ Statistiques: {stats['total_queries']} requêtes")
+            # Test d'insertion
+            test_data = {
+                "scan_id": "test_scan_001",
+                "target": "192.168.1.100",
+                "scan_type": "quick",
+                "status": "completed"
+            }
 
-                    # Test de santé
-                    health = db.health_check()
-                    print(f"✅ Santé: {'OK' if health['healthy'] else 'KO'}")
+            scan_id = db.insert("scans", test_data)
+            print(f"✅ Scan inséré: ID {scan_id}")
 
-                    # Test de sauvegarde
-                    backup_file = db.backup()
-                    print(f"✅ Sauvegarde: {backup_file}")
+            # Test de sélection
+            scans = db.select("scans", where={"target": "192.168.1.100"})
+            print(f"✅ Scans trouvés: {len(scans)}")
 
-                print("Test terminé avec succès")
+            # Test des statistiques
+            stats = db.get_stats()
+            print(f"✅ Statistiques: {stats['total_queries']} requêtes")
 
-            test_database()
+            # Test de santé
+            health = db.health_check()
+            print(f"✅ Santé: {'OK' if health['healthy'] else 'KO'}")
+
+            # Test de sauvegarde
+            backup_file = db.backup()
+            print(f"✅ Sauvegarde: {backup_file}")
+
+        print("Test terminé avec succès")
+
+    test_database()

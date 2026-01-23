@@ -71,6 +71,7 @@ class VulnerabilityInfo:
     references: List[str]
     detection_method: str
     confidence: str
+    detection_location: Optional[Dict[str, Any]] = None  # URL, chemin, port, output brut
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -132,6 +133,9 @@ class Collector:
 
         # Base de données pour historique
         self.db = Database()
+        
+        # Cible du scan en cours (pour construction des localisations)
+        self.current_target = None
 
         # Cache des vulnérabilités connues
         self.vulnerability_db = self._load_vulnerability_database()
@@ -255,6 +259,9 @@ class Collector:
 
             # Parser les résultats
             parsed_results = self._parse_nmap_results(scan_data, target)
+            
+            # Stocker le target pour les appels suivants
+            self.current_target = target
 
             if progress_callback:
                 progress_callback(85)
@@ -453,7 +460,7 @@ class Collector:
                     services.append(service)
 
         # Vulnérabilités détectées par les scripts NSE
-        vulnerabilities = self._extract_vulnerabilities_from_scripts(host_info)
+        vulnerabilities = self._extract_vulnerabilities_from_scripts(host_info, target)
 
         return {
             'host_status': host_status,
@@ -463,9 +470,10 @@ class Collector:
             'stats': scan_data.get('scan_info', {})
         }
 
-    def _extract_vulnerabilities_from_scripts(self, host_info) -> List[VulnerabilityInfo]:
+    def _extract_vulnerabilities_from_scripts(self, host_info, target: Optional[str] = None) -> List[VulnerabilityInfo]:
         """Extrait les vulnérabilités des scripts NSE"""
         vulnerabilities = []
+        target = target or self.current_target
 
         # Parcourir tous les ports et leurs scripts
         for protocol in host_info.all_protocols():
@@ -482,7 +490,8 @@ class Collector:
                             script_name,
                             script_output,
                             port,
-                            port_info.get('name', 'unknown')
+                            port_info.get('name', 'unknown'),
+                            target
                         )
                         vulnerabilities.extend(vulns)
 
@@ -493,7 +502,7 @@ class Collector:
                 script_output = script['output']
 
                 vulns = self._parse_script_vulnerabilities(
-                    script_name, script_output, 0, 'host'
+                    script_name, script_output, 0, 'host', target
                 )
                 vulnerabilities.extend(vulns)
 
@@ -504,10 +513,20 @@ class Collector:
             script_name: str,
             script_output: str,
             port: int,
-            service: str
+            service: str,
+            target: Optional[str] = None
     ) -> List[VulnerabilityInfo]:
         """Parse les vulnérabilités d'un script NSE spécifique"""
         vulnerabilities = []
+
+        # Construire la localisation de détection
+        detection_location = self._build_detection_location(
+            target=target,
+            port=port,
+            service=service,
+            script_name=script_name,
+            script_output=script_output
+        )
 
         # Patterns de détection par script
         script_patterns = {
@@ -551,36 +570,42 @@ class Collector:
             pattern_info = script_patterns[script_name]
 
             if re.search(pattern_info['pattern'], script_output, re.IGNORECASE):
+                cvss = self._get_cvss_score(pattern_info['vuln_id']) or self._extract_cvss_from_vulners_output(
+                    script_output, pattern_info['vuln_id']
+                )
                 vuln = VulnerabilityInfo(
                     vulnerability_id=pattern_info['vuln_id'],
                     name=pattern_info['name'],
-                    severity=pattern_info['severity'],
-                    cvss_score=self._get_cvss_score(pattern_info['vuln_id']),
+                    severity=self._severity_from_cvss(cvss) if cvss is not None else pattern_info['severity'],
+                    cvss_score=cvss,
                     description=self._extract_description(script_output),
                     affected_service=service,
                     affected_port=port,
                     cve_ids=[pattern_info['vuln_id']] if pattern_info['vuln_id'].startswith('CVE') else [],
                     references=self._extract_references(script_output),
                     detection_method=f"nmap-script:{script_name}",
-                    confidence="HIGH"
+                    confidence="HIGH",
+                    detection_location=detection_location
                 )
                 vulnerabilities.append(vuln)
 
         # Traiter les CVE trouvés génériquement
         for cve_id in cve_matches:
             if not any(v.vulnerability_id == cve_id for v in vulnerabilities):
+                cvss = self._get_cvss_score(cve_id) or self._extract_cvss_from_vulners_output(script_output, cve_id)
                 vuln = VulnerabilityInfo(
                     vulnerability_id=cve_id,
                     name=f"Vulnerability {cve_id}",
-                    severity=self._estimate_severity(script_output),
-                    cvss_score=self._get_cvss_score(cve_id),
+                    severity=self._severity_from_cvss(cvss) if cvss is not None else self._estimate_severity(script_output),
+                    cvss_score=cvss,
                     description=self._extract_description(script_output),
                     affected_service=service,
                     affected_port=port,
                     cve_ids=[cve_id],
                     references=self._extract_references(script_output),
                     detection_method=f"nmap-script:{script_name}",
-                    confidence="MEDIUM"
+                    confidence="MEDIUM",
+                    detection_location=detection_location
                 )
                 vulnerabilities.append(vuln)
 
@@ -632,6 +657,478 @@ class Collector:
             return 'MEDIUM'
         else:
             return 'LOW'
+
+    def _severity_from_cvss(self, cvss_score: Optional[float]) -> str:
+        """Déduit la sévérité depuis un score CVSS (0-10)."""
+        if cvss_score is None:
+            return "LOW"
+        try:
+            score = float(cvss_score)
+        except (ValueError, TypeError):
+            return "LOW"
+
+        if score >= 9.0:
+            return "CRITICAL"
+        if score >= 7.0:
+            return "HIGH"
+        if score >= 4.0:
+            return "MEDIUM"
+        return "LOW"
+
+    def _extract_cvss_from_vulners_output(self, script_output: str, cve_id: Optional[str] = None) -> Optional[float]:
+        """
+        Extrait un score CVSS depuis l'output du script Nmap `vulners`.
+
+        IMPORTANT:
+        - L'output `vulners` peut contenir de nombreuses entrées (exploit/refs) avec des scores élevés
+          qui ne correspondent PAS forcément à la CVE courante.
+        - Donc, si `cve_id` est fourni, on extrait UNIQUEMENT un score depuis une ligne qui mentionne
+          explicitement cette CVE (ou une URL `/cve/<CVE>`).
+        """
+        try:
+            import re
+
+            lines = script_output.splitlines()
+            scores: List[float] = []
+
+            # 1) Mode sûr: chercher le score sur les lignes qui contiennent la CVE
+            if cve_id:
+                cve_upper = cve_id.upper()
+                for line in lines:
+                    if not line:
+                        continue
+                    l_up = line.upper()
+                    if cve_upper in l_up or f"/CVE/{cve_upper}" in l_up or f"/CVE-{cve_upper[4:]}" in l_up:
+                        # Pattern tabulé très fréquent: <SRC>:<ID>\t<score>\t<url>
+                        m = re.search(r"\t(10(?:\.0)?|\d(?:\.\d)?)\t", line)
+                        if m:
+                            try:
+                                v = float(m.group(1))
+                                if 0.0 <= v <= 10.0:
+                                    scores.append(v)
+                            except Exception:
+                                pass
+
+                        # Fallback: "CVSS: 9.8" sur la même ligne
+                        m2 = re.search(r"CVSS[:\s]+(10(?:\.0)?|\d(?:\.\d)?)", line, re.IGNORECASE)
+                        if m2:
+                            try:
+                                v = float(m2.group(1))
+                                if 0.0 <= v <= 10.0:
+                                    scores.append(v)
+                            except Exception:
+                                pass
+
+                # Ne pas “inventer” un score si on n'a rien trouvé spécifiquement pour cette CVE
+                return max(scores) if scores else None
+
+            # 2) Mode best-effort (sans CVE): garder l'ancien comportement, mais plus prudent:
+            # prendre un score “raisonnable” sans forcer le max (qui tend à 9.8/10 à cause des exploits).
+            for line in lines:
+                m = re.search(r"\t(10(?:\.0)?|\d(?:\.\d)?)\t", line)
+                if m:
+                    try:
+                        v = float(m.group(1))
+                        if 0.0 <= v <= 10.0:
+                            scores.append(v)
+                    except Exception:
+                        pass
+
+            if not scores:
+                m = re.search(r"CVSS[:\s]+(10(?:\.0)?|\d(?:\.\d)?)", script_output, re.IGNORECASE)
+                if m:
+                    v = float(m.group(1))
+                    if 0.0 <= v <= 10.0:
+                        scores.append(v)
+
+            if not scores:
+                return None
+
+            # Choix prudent: médiane pour éviter les faux “9.8” systématiques
+            scores.sort()
+            mid = len(scores) // 2
+            return scores[mid] if len(scores) % 2 == 1 else (scores[mid - 1] + scores[mid]) / 2.0
+        except Exception:
+            return None
+
+    def _build_detection_location(
+            self,
+            target: Optional[str],
+            port: int,
+            service: str,
+            script_name: str,
+            script_output: str
+    ) -> Dict[str, Any]:
+        """
+        Construit les informations de localisation de détection d'une vulnérabilité.
+        Inclut URL, chemin de service, port, et extraits pertinents de l'output.
+        """
+        location = {
+            "port": port,
+            "service": service,
+            "script_name": script_name,
+            "protocol": "tcp" if port > 0 else "host",
+            "raw_output": script_output[:1000]  # Limiter à 1000 caractères
+        }
+
+        # Construire l'URL complète si c'est un service web
+        if target:
+            location["target"] = target
+            
+            # URL pour services HTTP/HTTPS
+            if service.lower() in ['http', 'https', 'http-proxy', 'ssl/http'] or port in [80, 443, 8080, 8443]:
+                protocol = 'https' if port in [443, 8443] or 'ssl' in service.lower() else 'http'
+                location["url"] = f"{protocol}://{target}:{port}" if port not in [80, 443] else f"{protocol}://{target}"
+                
+                # Essayer d'extraire des endpoints/paths depuis l'output
+                path_patterns = [
+                    r'/([^\s<>"{}|\\^`\[\]]+)',  # Chemins dans l'output
+                    r'path[:\s]+([^\s\n]+)',
+                    r'endpoint[:\s]+([^\s\n]+)'
+                ]
+                for pattern in path_patterns:
+                    matches = re.findall(pattern, script_output, re.IGNORECASE)
+                    if matches:
+                        location["detected_paths"] = matches[:5]  # Limiter à 5
+                        break
+            else:
+                # Pour les autres services, construire une adresse de connexion
+                location["connection_string"] = f"{target}:{port} ({service})"
+
+        # Extraire des chemins de fichiers depuis l'output (Phase 1: amélioration)
+        detected_files = self._extract_file_paths_from_output(script_output, service, target)
+        
+        if detected_files:
+            location["detected_files"] = detected_files
+
+        # Extraire des extraits pertinents de l'output (lignes contenant "VULNERABLE", "CVE", etc.)
+        relevant_lines = []
+        for line in script_output.split('\n'):
+            line_lower = line.lower()
+            if any(keyword in line_lower for keyword in ['vulnerable', 'cve-', 'exploit', 'risk', 'critical', 'high']):
+                relevant_lines.append(line.strip())
+                if len(relevant_lines) >= 3:  # Limiter à 3 lignes
+                    break
+        
+        if relevant_lines:
+            location["relevant_excerpts"] = relevant_lines
+
+        # Extraire les informations de version (format Tenable)
+        version_info = self._extract_version_info(script_output)
+        if version_info:
+            location["version_info"] = version_info
+
+        return location
+
+    def _extract_version_info(self, script_output: str) -> Optional[Dict[str, Any]]:
+        """
+        Extrait les informations de version depuis l'output (format Tenable)
+        Cherche: version détectée, version requise, messages de patch
+        """
+        version_info = {}
+        
+        # Extraire la version depuis le CPE (format: cpe:/a:vendor:product:version)
+        cpe_pattern = r'cpe:/a:([^:]+):([^:]+):([^:]+)'
+        cpe_match = re.search(cpe_pattern, script_output, re.IGNORECASE)
+        if cpe_match:
+            version_info['service_name'] = cpe_match.group(2).replace('_', ' ')  # Ex: "http_server" -> "http server"
+            version_info['detected_version'] = cpe_match.group(3)
+            version_info['vendor'] = cpe_match.group(1)
+            version_info['product'] = cpe_match.group(2)
+        
+        # Patterns pour détecter les versions (fallback si pas de CPE)
+        if not version_info.get('detected_version'):
+            version_patterns = [
+                r'version[:\s]+([\d.]+)',
+                r'v([\d.]+)',
+                r'(\d+\.\d+\.\d+(?:\.\d+)?)',
+                r'(\d+\.\d+)',
+            ]
+            
+            detected_versions = []
+            for pattern in version_patterns:
+                matches = re.findall(pattern, script_output, re.IGNORECASE)
+                if matches:
+                    detected_versions.extend(matches)
+            
+            if detected_versions:
+                # Prendre la première version trouvée comme version détectée
+                version_info['detected_version'] = detected_versions[0]
+        
+        # Chercher "should be", "required", "minimum", "patched"
+        required_patterns = [
+            r'should be[:\s]+([\d.]+)',
+            r'required[:\s]+([\d.]+)',
+            r'minimum[:\s]+([\d.]+)',
+            r'patched[:\s]+([\d.]+)',
+            r'must be[:\s]+([\d.]+)',
+        ]
+        
+        for pattern in required_patterns:
+            match = re.search(pattern, script_output, re.IGNORECASE)
+            if match:
+                version_info['required_version'] = match.group(1)
+                break
+        
+        # Chercher des messages de patch/patched
+        patch_patterns = [
+            r'has not been patched',
+            r'not patched',
+            r'is vulnerable',
+            r'vulnerable version',
+        ]
+        
+        for pattern in patch_patterns:
+            if re.search(pattern, script_output, re.IGNORECASE):
+                version_info['patch_status'] = 'not_patched'
+                break
+        
+        # Extraire les CVE principales depuis l'output
+        cve_matches = re.findall(r'(CVE-\d{4}-\d{4,})', script_output, re.IGNORECASE)
+        if cve_matches:
+            version_info['cves'] = list(set(cve_matches))[:5]  # Limiter à 5 CVE uniques
+        
+        # Compter les exploits disponibles
+        exploit_count = len(re.findall(r'\*EXPLOIT\*', script_output, re.IGNORECASE))
+        if exploit_count > 0:
+            version_info['exploit_count'] = exploit_count
+        
+        return version_info if version_info else None
+
+    def _extract_file_paths_from_output(
+        self,
+        script_output: str,
+        service: str,
+        target: Optional[str] = None
+    ) -> List[str]:
+        """
+        Phase 1: Extraction améliorée des chemins de fichiers depuis l'output Nmap.
+        Combine extraction par patterns, mappings service → fichiers, et parsing CPE.
+        """
+        detected_files = []
+        
+        # 1. Patterns améliorés pour détecter les fichiers dans l'output
+        file_path_patterns = [
+            # Windows paths (améliorés)
+            r'(C:\\[^\s<>"{}|\\^`\[\]]+\.(?:dll|exe|sys|conf|config|ini|bat|cmd))',
+            r'(C:\\Program Files[^\s<>"{}|\\^`\[\]]+\.(?:dll|exe))',
+            r'(C:\\Program Files \(x86\)[^\s<>"{}|\\^`\[\]]+\.(?:dll|exe))',
+            r'(C:\\Windows[^\s<>"{}|\\^`\[\]]+\.(?:dll|exe|sys))',
+            r'(C:\\Windows\\System32[^\s<>"{}|\\^`\[\]]+\.(?:dll|exe))',
+            # Linux paths (améliorés)
+            r'(/etc/[^\s<>"{}|\\^`\[\]]+\.(?:conf|config|ini|xml|json|yaml|yml))',
+            r'(/usr/[^\s<>"{}|\\^`\[\]]+\.(?:so|dylib|a))',
+            r'(/usr/lib[^\s<>"{}|\\^`\[\]]+\.(?:so|dylib))',
+            r'(/usr/lib64[^\s<>"{}|\\^`\[\]]+\.(?:so|dylib))',
+            r'(/var/[^\s<>"{}|\\^`\[\]]+\.(?:log|conf|config))',
+            r'(/opt/[^\s<>"{}|\\^`\[\]]+\.(?:conf|config|ini))',
+            # Chemins mentionnés explicitement
+            r'file[:\s]+([^\s\n]+\.(?:dll|exe|so|conf|config|ini))',
+            r'path[:\s]+([^\s\n]+\.(?:dll|exe|so|conf|config|ini))',
+            r'located at[:\s]+([^\s\n]+)',
+            r'found at[:\s]+([^\s\n]+)',
+            r'installed at[:\s]+([^\s\n]+)',
+        ]
+        
+        for pattern in file_path_patterns:
+            matches = re.findall(pattern, script_output, re.IGNORECASE)
+            detected_files.extend(matches)
+        
+        # 2. Mappings service → fichiers typiques (Phase 1)
+        service_file_mappings = self._get_service_file_mappings(service, script_output)
+        detected_files.extend(service_file_mappings)
+        
+        # 3. Extraire depuis CPE si disponible
+        cpe_files = self._extract_files_from_cpe(script_output, service)
+        detected_files.extend(cpe_files)
+        
+        # Nettoyer et dédupliquer
+        detected_files = [f.strip() for f in detected_files if f and len(f) > 3]
+        detected_files = list(set(detected_files))  # Supprimer les doublons
+        
+        # Limiter à 10 fichiers les plus pertinents
+        return detected_files[:10]
+
+    def _get_service_file_mappings(
+        self,
+        service: str,
+        script_output: str
+    ) -> List[str]:
+        """
+        Retourne les fichiers typiques associés à un service.
+        Phase 1: Mappings basiques basés sur le service détecté.
+        """
+        service_lower = service.lower()
+        mapped_files = []
+        
+        # Mappings service → fichiers typiques
+        SERVICE_FILE_MAPPINGS = {
+            'apache': [
+                '/etc/apache2/apache2.conf',
+                '/etc/httpd/httpd.conf',
+                '/etc/httpd/conf/httpd.conf',
+                '/usr/lib/apache2/modules/',
+                '/var/www/html/',
+            ],
+            'httpd': [
+                '/etc/httpd/httpd.conf',
+                '/etc/apache2/apache2.conf',
+                '/usr/lib/httpd/modules/',
+            ],
+            'nginx': [
+                '/etc/nginx/nginx.conf',
+                '/etc/nginx/conf.d/',
+                '/usr/lib/nginx/modules/',
+            ],
+            'openssl': [
+                '/usr/lib/libssl.so',
+                '/usr/lib64/libssl.so',
+                '/usr/lib/x86_64-linux-gnu/libssl.so',
+                'C:\\Windows\\System32\\libssl.dll',
+                'C:\\Windows\\System32\\libcrypto.dll',
+            ],
+            'ssh': [
+                '/etc/ssh/sshd_config',
+                '/etc/ssh/ssh_config',
+                '/usr/bin/ssh',
+                '/usr/sbin/sshd',
+            ],
+            'mysql': [
+                '/etc/mysql/my.cnf',
+                '/etc/my.cnf',
+                '/usr/lib/mysql/libmysqlclient.so',
+                'C:\\Program Files\\MySQL\\MySQL Server\\bin\\mysqld.exe',
+            ],
+            'postgresql': [
+                '/etc/postgresql/postgresql.conf',
+                '/var/lib/postgresql/data/postgresql.conf',
+                '/usr/lib/postgresql/libpq.so',
+            ],
+            'php': [
+                '/etc/php/php.ini',
+                '/usr/lib/php/modules/',
+                '/var/www/html/',
+            ],
+            'python': [
+                '/usr/lib/python3/dist-packages/',
+                '/usr/local/lib/python3/',
+                '/opt/python/lib/',
+            ],
+            'java': [
+                '/usr/lib/jvm/',
+                '/opt/java/',
+                'C:\\Program Files\\Java\\',
+            ],
+            'tomcat': [
+                '/etc/tomcat/server.xml',
+                '/var/lib/tomcat/conf/',
+                '/opt/tomcat/conf/',
+            ],
+            'iis': [
+                'C:\\Windows\\System32\\inetsrv\\',
+                'C:\\inetpub\\wwwroot\\',
+            ],
+        }
+        
+        # Chercher le service dans les mappings
+        for service_key, files in SERVICE_FILE_MAPPINGS.items():
+            if service_key in service_lower or service_lower in service_key:
+                mapped_files.extend(files)
+                break
+        
+        # Vérifier si ces fichiers sont mentionnés dans l'output ou si le service est clairement identifié
+        # Phase 1: On inclut les fichiers typiques si le service est détecté avec confiance
+        if script_output:
+            relevant_files = []
+            script_lower = script_output.lower()
+            
+            for file_path in mapped_files:
+                file_name = file_path.split('/')[-1].split('\\')[-1]
+                dir_name = '/'.join(file_path.split('/')[:-1]) if '/' in file_path else '\\'.join(file_path.split('\\')[:-1])
+                
+                # Vérifier si le fichier, son nom, ou son répertoire est mentionné
+                if (file_name.lower() in script_lower or 
+                    file_path.lower() in script_lower or
+                    any(part in script_lower for part in dir_name.split('/') if len(part) > 3) or
+                    any(part in script_lower for part in dir_name.split('\\') if len(part) > 3)):
+                    relevant_files.append(file_path)
+            
+            # Si aucun fichier n'est mentionné mais que le service est clairement identifié,
+            # on retourne quand même les fichiers les plus probables (max 3)
+            if not relevant_files and mapped_files:
+                # Prendre les fichiers les plus communs pour ce service
+                relevant_files = mapped_files[:3]
+            
+            return relevant_files
+        
+        # Si pas d'output, retourner les fichiers les plus communs (max 3)
+        return mapped_files[:3] if mapped_files else []
+
+    def _extract_files_from_cpe(
+        self,
+        script_output: str,
+        service: str
+    ) -> List[str]:
+        """
+        Extrait les chemins de fichiers depuis les CPE (Common Platform Enumeration).
+        Phase 1: Parsing CPE amélioré.
+        """
+        detected_files = []
+        
+        # Pattern CPE: cpe:/a:vendor:product:version:update:edition:language
+        cpe_pattern = r'cpe:/a:([^:]+):([^:]+):([^:]+)'
+        cpe_matches = re.findall(cpe_pattern, script_output, re.IGNORECASE)
+        
+        for vendor, product, version in cpe_matches:
+            product_lower = product.lower().replace('_', ' ')
+            
+            # Mapper le produit CPE vers des fichiers typiques
+            cpe_file_mappings = {
+                'apache http server': [
+                    '/etc/apache2/apache2.conf',
+                    '/etc/httpd/httpd.conf',
+                    '/usr/lib/apache2/modules/mod_ssl.so',
+                ],
+                'http server': [
+                    '/etc/httpd/httpd.conf',
+                    '/etc/apache2/apache2.conf',
+                ],
+                'openssl': [
+                    '/usr/lib/libssl.so',
+                    '/usr/lib64/libssl.so',
+                    'C:\\Windows\\System32\\libssl.dll',
+                ],
+                'openssh': [
+                    '/etc/ssh/sshd_config',
+                    '/usr/sbin/sshd',
+                ],
+                'mysql': [
+                    '/etc/mysql/my.cnf',
+                    '/usr/lib/mysql/libmysqlclient.so',
+                ],
+                'postgresql': [
+                    '/etc/postgresql/postgresql.conf',
+                    '/var/lib/postgresql/data/postgresql.conf',
+                ],
+            }
+            
+            # Chercher dans les mappings CPE
+            for cpe_key, files in cpe_file_mappings.items():
+                if cpe_key in product_lower:
+                    detected_files.extend(files)
+                    break
+            
+            # Si pas de mapping spécifique, générer des chemins probables basés sur le produit
+            if not any(cpe_key in product_lower for cpe_key in cpe_file_mappings.keys()):
+                # Générer des chemins génériques basés sur le produit
+                if 'server' in product_lower or 'http' in product_lower:
+                    detected_files.append(f'/etc/{product.replace("_", "-")}/')
+                    detected_files.append(f'/usr/lib/{product.replace("_", "-")}/')
+                elif 'library' in product_lower or 'lib' in product_lower:
+                    detected_files.append(f'/usr/lib/lib{product.replace("_", "")}.so')
+                    detected_files.append(f'/usr/lib64/lib{product.replace("_", "")}.so')
+        
+        return detected_files
 
     def _enrich_vulnerabilities(self, vulnerabilities: List[VulnerabilityInfo]) -> List[VulnerabilityInfo]:
         """Enrichit les vulnérabilités avec des données supplémentaires"""

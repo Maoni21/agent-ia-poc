@@ -31,6 +31,8 @@ class Config:
 
     # === CONFIGURATION API ===
     openai_api_key: str
+    # Clé Vulners (optionnelle mais recommandée)
+    vulners_api_key: Optional[str] = None
     openai_model: str = "gpt-3.5-turbo"  # Changé de gpt-4 à gpt-3.5-turbo (plus rapide)
     openai_max_tokens: int = 3000  # ← MODIFIÉ : Réduit de 2000 à 1000
     openai_temperature: float = 0.3
@@ -94,6 +96,9 @@ OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-3.5-turbo")  # Changé de gpt-4
 # Configuration Anthropic
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")
+
+# Vulners (optionnel)
+VULNERS_API_KEY = os.getenv("VULNERS_API_KEY") or os.getenv("VULNERS_KEY")
 
 MAX_TOKENS = int(os.getenv("MAX_TOKENS", "1000"))  # ← MODIFIÉ : Réduit de 2000 à 1000
 TEMPERATURE = float(os.getenv("TEMPERATURE", "0.3"))
@@ -241,6 +246,7 @@ def get_config() -> Config:
 
     return Config(
         openai_api_key=api_key,  # Utiliser la bonne clé selon le provider
+        vulners_api_key=VULNERS_API_KEY,
         openai_model=model,  # Utiliser le bon modèle selon le provider
         openai_max_tokens=MAX_TOKENS,
         openai_temperature=TEMPERATURE,

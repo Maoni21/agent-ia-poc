@@ -230,6 +230,145 @@ Voici une liste de vulnérabilités détectées sur un système en production :
 Sois pragmatique et oriente business dans tes recommandations.
 """
 
+# === PROMPT DE PLAN DE MISES À JOUR OPTIMISÉ ===
+
+UPGRADE_PLAN_PROMPT = """
+Tu es un expert en cybersécurité et administration système spécialisé dans la remédiation efficace de vulnérabilités.
+
+**CONTEXTE :**
+Un scan de sécurité a détecté {vulnerability_count} vulnérabilités sur un système. Tu dois analyser toutes les solutions proposées (liens NIST, vendor advisories, etc.) et identifier les **mises à jour de composants/paquets** qui permettent de corriger le **maximum de vulnérabilités** avec le **minimum d'actions réalistes**.
+
+**DONNÉES DES VULNÉRABILITÉS :**
+Les vulnérabilités suivantes te sont fournies sous forme de JSON :
+{vulnerabilities_data}
+
+Chaque entrée contient au minimum :
+- id (CVE ou ID interne)
+- name
+- severity
+- cvss_score (si connu)
+- affected_service (service/produit impacté, si connu)
+- solution_links (liens NIST / vendor advisories / documentation)
+
+**TÂCHE :**
+1. **Identifier les composants communs** : regrouper les vulnérabilités par composant/paquet/service (ex: Apache httpd, OpenSSL, PHP, kernel, etc.).
+2. **Analyser les solutions** : lire les solution_links fournis pour chaque vulnérabilité et en déduire les mises à jour ou actions correctrices proposées.
+3. **Créer un plan par étapes** : proposer des mises à jour ordonnées qui corrigent le plus de vulnérabilités possible, en restant cohérent avec les liens de solution.
+
+**RÈGLES IMPORTANTES :**
+- Ne propose JAMAIS qu'une seule mise à jour qui corrige quasiment toutes les vulnérabilités, sauf si TOUTES les solutions pointent explicitement vers la même mise à jour globale.
+- Si les vulnérabilités concernent des composants différents, le plan DOIT contenir plusieurs étapes (une par composant ou groupe de composants).
+- Utilise les informations des solution_links pour déterminer les versions cibles et justifier chaque étape.
+- Ordre d'exécution logique : mettre à jour d'abord les composants critiques/partagés (ex: OpenSSL, bibliothèques crypto, kernel) avant les services applicatifs.
+- Indique les contraintes : redémarrages nécessaires, interruptions de service, dépendances entre mises à jour.
+
+**FORMAT DE RÉPONSE ATTENDU (JSON strict) :**
+```json
+{{
+  "upgrade_plan": [
+    {{
+      "step": 1,
+      "component": "apache2",
+      "component_display_name": "Apache HTTP Server",
+      "current_version": "2.4.25 (détecté ou estimé)",
+      "target_version": ">=2.4.62",
+      "vulnerabilities_fixed": ["CVE-2023-XXXX", "CVE-2023-YYYY", "..."],
+      "vulnerability_count": 25,
+      "reason": "Mise à jour vers 2.4.62 corrige 25 CVE selon les advisories Apache et NIST",
+      "priority": "CRITICAL|HIGH|MEDIUM",
+      "requires_reboot": false,
+      "estimated_duration": "15-30 minutes",
+      "command_hint": "apt-get update && apt-get install apache2=2.4.62-*"
+    }}
+  ],
+  "summary": {{
+    "total_steps": 3,
+    "total_vulnerabilities_fixed": 45,
+    "estimated_total_time": "1-2 heures",
+    "requires_reboot": false
+  }},
+  "notes": "Notes importantes : redémarrage Apache requis après mise à jour. Vérifier la compatibilité avec les modules tiers avant de procéder."
+}}
+```
+
+**CRITÈRES D'OPTIMISATION :**
+- Maximiser le nombre de vulnérabilités corrigées par étape, **sans exagérer** l'effet d'une seule mise à jour.
+- Minimiser le nombre total d'étapes tout en restant fidèle aux composants réellement concernés.
+- Prioriser les composants critiques (services web, bibliothèques système, crypto, kernel).
+- Considérer les dépendances entre composants et les impacts possibles (redémarrage, compatibilité).
+
+Réponds UNIQUEMENT en JSON valide, sans texte supplémentaire avant ou après.
+"""
+
+# === PROMPT DE PLAN DE MISES À JOUR PAR PATTERN DETECTION ===
+
+UPGRADE_PLAN_PATTERN_PROMPT = """
+Tu es un expert en cybersécurité. On te fournit une liste de solutions pour différentes vulnérabilités (CVE).
+
+**OBJECTIF PRINCIPAL :**
+Identifier les **PATTERNS RÉPÉTÉS** (les mêmes solutions qui apparaissent pour plusieurs CVE).
+Grâce à ces patterns, proposer un plan de mises à jour qui règle le **MAXIMUM de vulnérabilités en un minimum d'actions**.
+
+**RAPPEL IMPORTANT :**
+Le pattern detection n'est qu'une étape. L'objectif final est de trouver la solution qui règle le plus de vulnérabilités en même temps.
+
+**LISTE DES SOLUTIONS (une phrase par CVE) :**
+{solutions_text}
+
+**TÂCHE :**
+1. **Identifier les patterns répétés** : Repère les phrases qui mentionnent la même mise à jour (ex: "mettre à jour Apache vers 2.4.62" apparaît pour plusieurs CVE).
+2. **Compter l'impact** : Pour chaque pattern répété, compte combien de CVE sont corrigées par cette même mise à jour.
+3. **Proposer un plan optimisé** : Crée un plan ordonné par priorité où chaque étape est une mise à jour qui corrige le maximum de vulnérabilités.
+
+**EXEMPLE DE PATTERN :**
+- Si tu vois "CVE-2023-XXXX se règle en mettant à jour Apache vers 2.4.62"
+- Et "CVE-2023-YYYY se règle en mettant à jour Apache vers 2.4.62"
+- Et "CVE-2023-ZZZZ se règle en mettant à jour Apache vers 2.4.62"
+- Alors le pattern est : "Mettre à jour Apache vers 2.4.62" corrige 3 CVE
+
+**FORMAT DE RÉPONSE ATTENDU (JSON strict) :**
+```json
+{{
+  "upgrade_plan": [
+    {{
+      "step": 1,
+      "component": "apache2",
+      "component_display_name": "Apache HTTP Server",
+      "target_version": ">=2.4.62",
+      "vulnerabilities_fixed": ["CVE-2023-XXXX", "CVE-2023-YYYY", "CVE-2023-ZZZZ"],
+      "vulnerability_count": 3,
+      "reason": "Cette mise à jour apparaît dans 3 solutions différentes, corrigeant ainsi 3 vulnérabilités d'un coup",
+      "priority": "HIGH",
+      "requires_reboot": false,
+      "estimated_duration": "15-30 minutes",
+      "command_hint": "apt-get update && apt-get install apache2=2.4.62-*"
+    }}
+  ],
+  "summary": {{
+    "total_steps": 2,
+    "total_vulnerabilities_fixed": 5,
+    "estimated_total_time": "30-60 minutes",
+    "requires_reboot": false
+  }},
+  "notes": "Le plan a été optimisé en regroupant les vulnérabilités par solution commune. Chaque étape corrige plusieurs CVE simultanément."
+}}
+```
+
+**RÈGLES IMPORTANTES :**
+- Prioriser les mises à jour qui corrigent le plus de vulnérabilités
+- Si plusieurs patterns corrigent le même nombre, prioriser par sévérité (CRITICAL > HIGH > MEDIUM > LOW)
+- Ne créer qu'une seule étape si toutes les solutions pointent vers la même mise à jour
+- Ne pas créer des étapes redondantes si une mise à jour couvre déjà une autre
+- Identifier les patterns même si les phrases sont légèrement différentes (ex: "Apache" vs "apache2" = même pattern)
+
+**CRITÈRES DE PATTERN DETECTION :**
+- Si plusieurs CVE demandent la même version d'un même composant → C'est un pattern
+- Si plusieurs CVE demandent la même mise à jour (même si formulée différemment) → C'est un pattern
+- Les patterns répétés indiquent la solution qui règle le plus de vulnérabilités en même temps
+
+Réponds UNIQUEMENT en JSON valide, sans texte supplémentaire avant ou après.
+"""
+
 # === PROMPT DE VALIDATION DE SCRIPT ===
 
 SCRIPT_VALIDATION_PROMPT = """
@@ -525,6 +664,43 @@ def format_executive_report_prompt(
     )
 
 
+def format_upgrade_plan_prompt(
+        vulnerabilities_data: str,
+        vulnerability_count: int
+) -> str:
+    """
+    Formate le prompt de plan de mises à jour optimisé
+
+    Args:
+        vulnerabilities_data: Données des vulnérabilités formatées (JSON ou texte structuré)
+        vulnerability_count: Nombre total de vulnérabilités
+
+    Returns:
+        str: Prompt formaté pour le plan de mises à jour
+    """
+    return UPGRADE_PLAN_PROMPT.format(
+        vulnerabilities_data=vulnerabilities_data,
+        vulnerability_count=vulnerability_count
+    )
+
+
+def format_upgrade_plan_pattern_prompt(
+        solutions_text: str
+) -> str:
+    """
+    Formate le prompt de plan de mises à jour basé sur la détection de patterns
+
+    Args:
+        solutions_text: Texte avec une phrase de solution par CVE (formaté depuis OSV.dev)
+
+    Returns:
+        str: Prompt formaté pour la détection de patterns et génération du plan
+    """
+    return UPGRADE_PLAN_PATTERN_PROMPT.format(
+        solutions_text=solutions_text
+    )
+
+
 # === DICTIONNAIRE DE TOUS LES PROMPTS ===
 
 ALL_PROMPTS = {
@@ -532,7 +708,8 @@ ALL_PROMPTS = {
     "script_generation": SCRIPT_GENERATION_PROMPT,
     "priority_assessment": PRIORITY_ASSESSMENT_PROMPT,
     "script_validation": SCRIPT_VALIDATION_PROMPT,
-    "executive_report": EXECUTIVE_REPORT_PROMPT
+    "executive_report": EXECUTIVE_REPORT_PROMPT,
+    "upgrade_plan": UPGRADE_PLAN_PROMPT
 }
 
 

@@ -28,7 +28,11 @@ from .collector import Collector, ScanResult
 from .analyzer import Analyzer, AnalysisResult
 from .generator import Generator, ScriptResult
 from .ansible_generator import AnsibleGenerator, AnsiblePlaybookResult
+from .vulnerability_validator import VulnerabilityValidator, ScanValidationReport
 from .exceptions import SupervisorException, CoreErrorCodes, ERROR_MESSAGES, TASK_STATUS, OPERATION_TYPES
+
+# Initialisation du logger en premier pour pouvoir l'utiliser partout (y compris dans les imports optionnels)
+logger = setup_logger(__name__)
 
 # Import optionnel pour les notifications
 try:
@@ -37,8 +41,6 @@ try:
 except ImportError:
     NOTIFICATIONS_AVAILABLE = False
     logger.warning("Notifications non disponibles (aiohttp requis)")
-
-logger = setup_logger(__name__)
 
 
 # === ÉNUMÉRATIONS ===
@@ -132,6 +134,7 @@ class WorkflowResult:
     scan_result: Optional[ScanResult] = None
     analysis_result: Optional[AnalysisResult] = None
     script_results: List[ScriptResult] = None
+    validation_report: Optional[ScanValidationReport] = None
     total_vulnerabilities: int = 0
     critical_vulnerabilities: int = 0
     scripts_generated: int = 0
@@ -147,6 +150,8 @@ class WorkflowResult:
             result['analysis_result'] = self.analysis_result.to_dict()
         if self.script_results:
             result['script_results'] = [script.to_dict() for script in self.script_results]
+        if self.validation_report:
+            result['validation_report'] = self.validation_report.to_dict()
         return result
 
 
@@ -366,7 +371,7 @@ class Supervisor:
 
     async def _execute_task(self, workflow_id: str, task_name: str, workflow_def: WorkflowDefinition,
                             workflow_result: WorkflowResult):
-        """Exécute une tâche spécifique"""
+        """Exécute une tâche spécifique et met à jour les compteurs du workflow"""
         task_id = f"{workflow_id}_{task_name}_{int(time.time())}"
         task_info = TaskInfo(
             task_id=task_id, workflow_id=workflow_id, task_type=task_name,
@@ -378,17 +383,55 @@ class Supervisor:
         try:
             logger.info(f"🔧 Exécution tâche: {task_name} ({workflow_id})")
 
+            result = None
+            results = None
+
             if task_name == "scan":
+                # Tâche de scan simple
                 result = await self._execute_scan_task(workflow_def, task_info)
                 workflow_result.scan_result = result
+
+                # Mettre à jour les compteurs de vulnérabilités après le scan
+                if result and getattr(result, "vulnerabilities", None):
+                    vuln_list = result.vulnerabilities
+                    workflow_result.total_vulnerabilities = len(vuln_list)
+                    workflow_result.critical_vulnerabilities = sum(
+                        1 for v in vuln_list
+                        if getattr(v, "severity", "").upper() == "CRITICAL"
+                    )
+                    logger.info(
+                        f"📊 Scan terminé: {workflow_result.total_vulnerabilities} vulnérabilités "
+                        f"({workflow_result.critical_vulnerabilities} critiques)"
+                    )
+
             elif task_name == "analyze":
+                # Tâche d'analyse IA
                 result = await self._execute_analyze_task(workflow_def, workflow_result, task_info)
                 workflow_result.analysis_result = result
+
+                # Mettre à jour les compteurs après l'analyse
+                if result and getattr(result, "vulnerabilities", None):
+                    vuln_list = result.vulnerabilities
+                    workflow_result.total_vulnerabilities = len(vuln_list)
+                    workflow_result.critical_vulnerabilities = sum(
+                        1 for v in vuln_list
+                        if getattr(v, "severity", "").upper() == "CRITICAL"
+                    )
+
             elif task_name == "generate_scripts":
+                # Tâche de génération de scripts
                 results = await self._execute_generate_task(workflow_def, workflow_result, task_info)
                 workflow_result.script_results = results
+
+                # Mettre à jour le compteur de scripts générés
+                if results:
+                    workflow_result.scripts_generated = len(results)
+
             else:
-                raise SupervisorException(f"Type de tâche inconnu: {task_name}", CoreErrorCodes.ORCHESTRATION_FAILED)
+                raise SupervisorException(
+                    f"Type de tâche inconnu: {task_name}",
+                    CoreErrorCodes.ORCHESTRATION_FAILED
+                )
 
             task_info.status = TASK_STATUS["COMPLETED"]
             task_info.completed_at = datetime.utcnow()
@@ -399,6 +442,7 @@ class Supervisor:
                 task_info.result = [r.to_dict() for r in results] if results else []
             else:
                 task_info.result = result.to_dict() if hasattr(result, 'to_dict') else result
+
             logger.info(f"✅ Tâche terminée: {task_name}")
         except Exception as e:
             logger.error(f"❌ Erreur tâche {task_name}: {e}")
@@ -595,6 +639,31 @@ class Supervisor:
         """Sauvegarde le résultat d'un workflow"""
         try:
             logger.debug(f"Sauvegarde workflow: {result.workflow_id}")
+            
+            # Générer le rapport de validation si on a un scan_result
+            if result.scan_result and not result.validation_report:
+                try:
+                    validator = VulnerabilityValidator(self.config)
+                    
+                    # Préparer les contextes depuis le scan_result
+                    scan_contexts = {}
+                    for vuln in result.scan_result.vulnerabilities:
+                        # Utiliser la description comme raw_output
+                        scan_contexts[vuln.vulnerability_id] = vuln.description
+                    
+                    # Générer les validations
+                    validation_report = validator.validate_scan(
+                        result.scan_result.to_dict(),
+                        scan_contexts
+                    )
+                    
+                    # Ajouter au résultat
+                    result.validation_report = validation_report
+                    
+                    logger.info(f"✅ Rapport de validation généré: {validation_report.summary['confirmed']} confirmées, {validation_report.summary['likely']} probables")
+                except Exception as e:
+                    logger.warning(f"Erreur génération validation: {e}")
+            
             results_dir = Path("data/workflow_results")
             results_dir.mkdir(exist_ok=True)
             result_file = results_dir / f"{result.workflow_id}.json"
