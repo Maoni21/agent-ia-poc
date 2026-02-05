@@ -1,0 +1,413 @@
+# ================================================================================
+# Requirements.txt pour l'Agent IA de Cybersécurité
+# Version: 1.0.0
+# Date: 2025-01-15
+# ================================================================================
+#
+# Ce fichier contient toutes les dépendances Python requises pour faire
+# fonctionner l'Agent IA de détection et correction automatisée de vulnérabilités.
+#
+# Installation:
+#   pip install -r requirements.txt
+#
+# Pour l'environnement de développement:
+#   pip install -r requirements-dev.txt
+#
+# Pour l'environnement de production:
+#   pip install -r requirements-prod.txt
+#
+# ================================================================================
+
+# ================================================================================
+# CORE DEPENDENCIES - Dépendances principales
+# ================================================================================
+
+# Scanning et détection de vulnérabilités
+python-nmap==0.7.1
+# Interface Python pour Nmap - scan de ports et détection de vulnérabilités
+
+python-nmap>=0.7.1
+# Wrapper Python pour Nmap (backup)
+
+# Intelligence Artificielle et LLM
+openai>=1.12.0
+# Client officiel OpenAI pour GPT-4 et modèles de langage
+
+anthropic
+# Client officiel Anthropic/Claude pour l'IA (utilisé si AI_PROVIDER=anthropic)
+
+requests>=2.31.0
+# Client HTTP pour les appels API et téléchargements
+
+httpx>=0.26.0
+# Client HTTP asynchrone moderne (alternative à requests)
+
+aiohttp>=3.9.0
+# Client HTTP asynchrone pour les notifications (Slack, Teams)
+
+# Configuration et validation des données
+pydantic>=2.5.0
+# Validation de données avec annotations de type
+
+pydantic-settings>=2.1.0
+# Gestion de configuration avec Pydantic
+
+python-dotenv>=1.0.0
+# Chargement des variables d'environnement depuis .env
+
+# Interface en ligne de commande
+click>=8.1.7
+# Framework pour créer des interfaces CLI élégantes
+
+rich>=13.7.0
+# Formatage riche pour terminal (couleurs, tables, progress bars)
+
+typer>=0.9.0
+# Framework CLI moderne basé sur Click et type hints
+
+# Gestion asynchrone
+asyncio-mqtt>=0.16.1
+# Client MQTT asynchrone (pour notifications)
+
+aiofiles>=23.2.1
+# Opérations de fichier asynchrones
+
+# WebSocket pour communication temps réel
+websockets>=12.0
+# Client et serveur WebSocket asynchrone
+
+# ================================================================================
+# DATABASE ET PERSISTANCE - Base de données et stockage
+# ================================================================================
+
+# Base de données SQLite
+sqlite-utils>=3.35.2
+# Utilitaires pour manipuler SQLite facilement
+
+# PostgreSQL
+psycopg2-binary>=2.9.9
+# Driver PostgreSQL pour Python (version binaire, plus facile à installer)
+
+# Migrations et ORM léger
+alembic>=1.13.1
+# Outil de migration de base de données
+
+sqlalchemy>=2.0.25
+# ORM Python pour PostgreSQL et SQLite
+
+# ================================================================================
+# PARSING ET DATA PROCESSING - Traitement des données
+# ================================================================================
+
+# Parsing XML et HTML
+lxml>=4.9.4
+# Parser XML/HTML rapide et robuste
+
+beautifulsoup4>=4.12.2
+# Parser HTML/XML plus simple d'utilisation
+
+xmltodict>=0.13.0
+# Conversion XML vers dictionnaire Python
+
+# Parsing JSON avancé
+json5>=0.9.14
+# Support JSON5 (JSON avec commentaires et trailing commas)
+
+jsonschema>=4.20.0
+# Validation de schémas JSON
+
+# Traitement CSV et données
+pandas>=2.1.4
+# Manipulation de données tabulaires (pour rapports)
+
+numpy>=1.26.3
+# Calculs numériques et matrices
+
+# ================================================================================
+# SECURITY ET CRYPTOGRAPHIE - Sécurité
+# ================================================================================
+
+# Cryptographie et sécurité
+cryptography>=41.0.8
+# Primitives cryptographiques (chiffrement, signatures, hash)
+
+bcrypt>=4.1.2
+# Hashage sécurisé de mots de passe
+
+passlib[bcrypt]>=1.7.4
+# Gestion complète des mots de passe et hash
+
+# Validation et sanitisation
+validators>=0.22.0
+# Validation d'emails, URLs, IPs, etc.
+
+bleach>=6.1.0
+# Sanitisation HTML/XSS
+
+# ================================================================================
+# NETWORKING ET PROTOCOLS - Réseau et protocoles
+# ================================================================================
+
+# Réseau et adressage IP
+# ipaddress (intégré à Python 3.3+)
+# Manipulation d'adresses IP et réseaux
+
+netaddr>=0.10.1
+# Manipulation avancée d'adresses réseau
+
+# DNS et résolution
+dnspython>=2.4.2
+# Client DNS complet
+
+# ================================================================================
+# DATE ET TEMPS - Gestion temporelle
+# ================================================================================
+
+# Date et temps
+python-dateutil>=2.8.2
+# Extensions pour datetime standard
+
+pytz>=2023.3
+# Base de données des fuseaux horaires
+
+arrow>=1.3.0
+# Manipulation de dates plus intuitive
+
+# ================================================================================
+# LOGGING ET MONITORING - Journalisation et surveillance
+# ================================================================================
+
+# Logging avancé
+colorlog>=6.8.0
+# Logs colorés dans le terminal
+
+structlog>=23.2.0
+# Logging structuré pour applications modernes
+
+# Monitoring et métriques
+psutil>=5.9.6
+# Informations système (CPU, mémoire, disque, réseau)
+
+# ================================================================================
+# FILE FORMATS ET TEMPLATES - Formats de fichiers
+# ================================================================================
+
+# Templates et génération de rapports
+jinja2>=3.1.2
+# Moteur de templates pour génération de rapports
+
+# Formats de fichier
+pyyaml>=6.0.1
+# Parser YAML pour fichiers de configuration
+
+toml>=0.10.2
+# Parser TOML pour fichiers de configuration Python
+
+# Génération de rapports PDF
+reportlab>=4.0.7
+# Génération de documents PDF professionnels
+
+pillow>=10.2.0
+# Traitement d'images pour les PDFs (requis par ReportLab)
+
+# ================================================================================
+# UTILITIES ET HELPERS - Utilitaires divers
+# ================================================================================
+
+# Utilitaires Python
+# pathlib2 (intégré à Python 3.4+)
+# Extensions pathlib pour compatibilité
+
+uuid>=1.30
+# Génération d'identifiants uniques
+
+# Gestion d'erreurs et debugging
+sentry-sdk>=1.39.2
+# Monitoring d'erreurs en production (optionnel)
+
+# Progress bars et interfaces
+tqdm>=4.66.1
+# Barres de progression pour opérations longues
+
+# ================================================================================
+# VERSION PINNING - Versions spécifiques critiques
+# ================================================================================
+
+# Versions critiques pour sécurité et compatibilité
+certifi>=2023.11.17
+# Certificats CA pour HTTPS
+
+urllib3>=2.1.0
+# Client HTTP de bas niveau
+
+setuptools>=69.0.3
+# Outils de packaging Python
+
+pip>=23.3.2
+# Gestionnaire de paquets Python
+
+# ================================================================================
+# CONDITIONAL DEPENDENCIES - Dépendances conditionnelles
+# ================================================================================
+
+# Pour Python < 3.11 (backports)
+typing-extensions>=4.8.0; python_version < "3.11"
+# Extensions de typing pour compatibilité
+
+# Pour Windows uniquement
+pywin32>=306; sys_platform == "win32"
+# APIs Windows natives
+
+# Pour systèmes Unix
+python-magic>=0.4.27; sys_platform != "win32"
+# Détection de type MIME sur Unix/Linux
+
+# ================================================================================
+# OPTIONAL API DEPENDENCIES - Dépendances API optionnelles
+# ================================================================================
+# Ces dépendances sont nécessaires si vous utilisez l'API REST
+# Installation: pip install -r requirements.txt -r requirements-api.txt
+
+# FastAPI et serveur ASGI (ESSENTIELS pour l'API REST)
+fastapi>=0.108.0
+uvicorn[standard]>=0.25.0
+python-multipart>=0.0.6
+python-jose[cryptography]>=3.3.0
+
+# ================================================================================
+# DEVELOPMENT TOOLS - Outils de développement
+# ================================================================================
+# Ces dépendances sont nécessaires pour le développement
+# Installation: pip install -r requirements.txt -r requirements-dev.txt
+
+# Tests (commentées par défaut)
+# pytest>=7.4.3
+# pytest-cov>=4.1.0
+# pytest-asyncio>=0.23.2
+# pytest-mock>=3.12.0
+
+# Code quality (commentées par défaut)
+# black>=23.12.1
+# isort>=5.13.2
+# flake8>=7.0.0
+# mypy>=1.8.0
+
+# ================================================================================
+# PLATFORM SPECIFIC - Spécifique aux plateformes
+# ================================================================================
+
+# Dépendances spécifiques Linux
+# Nécessaires pour certaines fonctionnalités avancées sur Linux
+# python-prctl>=1.8.1; sys_platform == "linux"  # Désactivé - nécessite libcap-dev et n'est pas essentiel
+# Contrôle des processus Linux
+
+# Dépendances macOS
+# Pour support complet sur macOS
+# pyobjc-framework-SystemConfiguration>=10.1; sys_platform == "darwin"
+
+# ================================================================================
+# CONSTRAINTS ET COMPATIBILITÉ - Contraintes de versions
+# ================================================================================
+
+# Contraintes de compatibilité importantes
+# S'assurer que certaines versions sont compatibles entre elles
+
+# OpenAI et HTTP clients doivent être compatibles
+# openai>=1.0.0,<2.0.0
+# requests>=2.25.0,<3.0.0
+
+# Pydantic v2 uniquement (breaking changes avec v1)
+# pydantic>=2.0.0,<3.0.0
+
+# ================================================================================
+# SECURITY CONSIDERATIONS - Considérations de sécurité
+# ================================================================================
+
+# Versions minimales pour sécurité
+# Ces versions incluent des correctifs de sécurité importants
+
+# cryptography>=41.0.0  # Correctifs CVE-2023-X
+# requests>=2.31.0      # Correctifs de sécurité HTTP
+# urllib3>=2.0.7        # Correctifs de sécurité
+# certifi>=2023.7.22    # Certificats CA mis à jour
+
+# ================================================================================
+# NOTES D'INSTALLATION
+# ================================================================================
+
+# INSTALLATION RECOMMANDÉE:
+# 1. Créer un environnement virtuel:
+#    python -m venv .venv
+#    source .venv/bin/activate  # Linux/macOS
+#    .venv\Scripts\activate     # Windows
+#
+# 2. Mettre à jour pip:
+#    pip install --upgrade pip
+#
+# 3. Installer les dépendances:
+#    pip install -r requirements.txt
+#
+# 4. Pour le développement:
+#    pip install -r requirements-dev.txt
+#
+# 5. Pour l'API:
+#    pip install -r requirements-api.txt
+#
+# DÉPENDANCES SYSTÈME REQUISES:
+# - Python 3.10 ou supérieur
+# - Nmap 7.80 ou supérieur
+# - Git (pour certaines dépendances)
+# - Compilateur C (pour certains packages comme cryptography)
+#
+# UBUNTU/DEBIAN:
+#   sudo apt-get update
+#   sudo apt-get install python3-dev python3-pip nmap git build-essential
+#
+# CENTOS/RHEL:
+#   sudo yum install python3-devel python3-pip nmap git gcc
+#
+# MACOS:
+#   brew install python nmap git
+#
+# WINDOWS:
+#   - Installer Python depuis python.org
+#   - Installer Nmap depuis nmap.org
+#   - Installer Git depuis git-scm.com
+#   - Installer Visual Studio Build Tools
+#
+# ================================================================================
+# TROUBLESHOOTING - Résolution de problèmes courants
+# ================================================================================
+
+# PROBLÈMES COURANTS ET SOLUTIONS:
+#
+# 1. Erreur compilation cryptography:
+#    - Ubuntu: sudo apt-get install libffi-dev libssl-dev
+#    - CentOS: sudo yum install libffi-devel openssl-devel
+#    - macOS: xcode-select --install
+#
+# 2. Erreur python-nmap:
+#    - Vérifier que nmap est installé: nmap --version
+#    - Permissions: certaines fonctions nécessitent sudo
+#
+# 3. Erreur OpenAI API:
+#    - Vérifier la clé API dans .env
+#    - Vérifier la connectivité Internet
+#    - Vérifier les quotas API OpenAI
+#
+# 4. Erreur imports:
+#    - Vérifier l'environnement virtuel activé
+#    - Réinstaller: pip install --force-reinstall -r requirements.txt
+#
+# 5. Performance lente:
+#    - Vérifier la version Python (3.10+ recommandé)
+#    - Augmenter la mémoire disponible (4GB+ recommandé)
+#
+# Pour obtenir de l'aide:
+# - GitHub Issues: https://github.com/company/vulnerability-agent-ia/issues
+# - Documentation: https://github.com/company/vulnerability-agent-ia/wiki
+# - Email: security@company.com
+
+# ================================================================================
+# FIN DU FICHIER REQUIREMENTS.TXT
+# ================================================================================

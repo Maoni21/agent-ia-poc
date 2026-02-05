@@ -313,7 +313,8 @@ async def list_scans(limit: int = 50):
                             scans_list.append({
                                 "scan_id": workflow_id,  # Utiliser workflow_id comme scan_id pour les scans terminés
                                 "target": workflow_data.get("target", "N/A"),
-                                "scan_type": workflow_data.get("scan_type", workflow_data.get("workflow_type", "unknown")),
+                                "scan_type": workflow_data.get("workflow_type", workflow_data.get("scan_type", "unknown")),  # Utiliser workflow_type en priorité
+                                "workflow_type": workflow_data.get("workflow_type", "unknown"),  # Ajouter aussi workflow_type explicitement
                                 "status": "completed",
                                 "progress": 100,
                                 "current_step": "Terminé",
@@ -774,21 +775,6 @@ async def run_scan_workflow(
         )
         
         active_scans[scan_id]["workflow_id"] = workflow_id
-        # Sauvegarder aussi le scan_id dans le workflow pour référence future
-        try:
-            workflow_file = WORKFLOWS_DIR / f"{workflow_id}.json"
-            if not workflow_file.exists():
-                workflow_file = ALT_WORKFLOWS_DIR / f"{workflow_id}.json"
-            
-            if workflow_file.exists():
-                with open(workflow_file, 'r+', encoding='utf-8') as f:
-                    workflow_data = json.load(f)
-                    workflow_data["scan_id"] = scan_id  # Sauvegarder le scan_id original
-                    f.seek(0)
-                    json.dump(workflow_data, f, indent=2, ensure_ascii=False)
-                    f.truncate()
-        except Exception as e:
-            logger.warning(f"Impossible de sauvegarder scan_id dans workflow: {e}")
         
         # Mettre à jour la progression pendant l'exécution
         await monitor_workflow_progress(scan_id, workflow_id, workflow_type)
@@ -799,9 +785,28 @@ async def run_scan_workflow(
         # Vérifier que le workflow a bien été sauvegardé
         workflow_file = WORKFLOWS_DIR / f"{workflow_id}.json"
         if not workflow_file.exists():
+            workflow_file = ALT_WORKFLOWS_DIR / f"{workflow_id}.json"
+        
+        if not workflow_file.exists():
             logger.warning(f"⚠️ Fichier workflow {workflow_id}.json non trouvé après completion")
             # Attendre un peu plus pour la sauvegarde
             await asyncio.sleep(2)
+            workflow_file = WORKFLOWS_DIR / f"{workflow_id}.json"
+            if not workflow_file.exists():
+                workflow_file = ALT_WORKFLOWS_DIR / f"{workflow_id}.json"
+        
+        # Sauvegarder le scan_id dans le workflow APRÈS sa création complète
+        if workflow_file.exists():
+            try:
+                with open(workflow_file, 'r+', encoding='utf-8') as f:
+                    workflow_data = json.load(f)
+                    workflow_data["scan_id"] = scan_id  # Sauvegarder le scan_id original
+                    f.seek(0)
+                    json.dump(workflow_data, f, indent=2, ensure_ascii=False)
+                    f.truncate()
+                logger.info(f"✅ scan_id {scan_id} sauvegardé dans workflow {workflow_id}")
+            except Exception as e:
+                logger.warning(f"Impossible de sauvegarder scan_id dans workflow: {e}")
         
         # Mettre à jour le statut final
         active_scans[scan_id].update({

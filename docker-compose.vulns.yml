@@ -1,0 +1,69 @@
+services:
+  # DVWA - Damn Vulnerable Web Application
+  dvwa:
+    image: vulnerables/web-dvwa
+    container_name: dvwa
+    ports:
+      - "8080:80"
+    environment:
+      - MYSQL_ROOT_PASSWORD=root
+      - MYSQL_DATABASE=dvwa
+      - MYSQL_USER=dvwa
+      - MYSQL_PASSWORD=p@ssw0rd
+    networks:
+      - vuln-network
+    restart: unless-stopped
+
+  # Heartbleed (CVE-2014-0160) - OpenSSL vulnerability
+  heartbleed:
+    image: vulnerables/cve-2014-0160
+    container_name: heartbleed
+    ports:
+      - "8443:443"
+    networks:
+      - vuln-network
+    restart: unless-stopped
+
+  # Metasploitable 2 - Linux vulnerable system
+  metasploitable:
+    image: tleemcjr/metasploitable2
+    container_name: metasploitable
+    ports:
+      - "2222:22"   # SSH
+      - "21:21"     # FTP
+      - "23:23"     # Telnet
+      - "25:25"     # SMTP
+      - "8081:80"   # HTTP (port host ajusté pour éviter conflit)
+      - "139:139"   # SMB
+      - "445:445"   # SMB
+      - "3306:3306" # MySQL
+      - "15432:5432" # PostgreSQL (port host ajusté pour éviter conflit avec notre DB)
+    networks:
+      - vuln-network
+    restart: unless-stopped
+
+  # WebGoat - OWASP vulnerable web application
+  webgoat:
+    image: webgoat/goatandwolf
+    container_name: webgoat
+    ports:
+      - "8082:8080"
+      - "9090:9090"
+    networks:
+      - vuln-network
+    restart: unless-stopped
+
+  # Juice Shop - OWASP vulnerable web application
+  juice-shop:
+    image: bkimminich/juice-shop
+    container_name: juice-shop
+    ports:
+      - "8083:3000"
+    networks:
+      - vuln-network
+    restart: unless-stopped
+
+networks:
+  vuln-network:
+    driver: bridge
+

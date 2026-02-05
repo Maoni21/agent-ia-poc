@@ -1638,8 +1638,8 @@ async def get_scan_vulnerabilities(scan_id: str, limit: int = 500):
                     # Identifier les différents IDs possibles pour ce workflow
                     workflow_id = workflow_file.stem  # ID principal (utilisé comme scan_id dans list_scans)
                     wf_scan_id = workflow_data.get("scan_id")  # éventuel scan_id racine
-                    scan_result = workflow_data.get("scan_result") or {}
-                    sr_scan_id = scan_result.get("scan_id")  # scan_id interne du collecteur
+                    scan_result = workflow_data.get("scan_result") or {}  # Définir scan_result tôt
+                    sr_scan_id = scan_result.get("scan_id") if scan_result else None  # scan_id interne du collecteur
 
                     # Correspondance améliorée :
                     # 1. Correspondance exacte avec scan_id
@@ -1811,10 +1811,67 @@ async def get_scan_vulnerabilities(scan_id: str, limit: int = 500):
         
         print(f"✅ Retour de {len(vulnerabilities_list)} vulnérabilités pour scan_id={scan_id}")
         
+        # Fallback : si aucun workflow trouvé, tenter de récupérer depuis la base SQLite
         if not vulnerabilities_list and not scan_info:
-            print(f"⚠️ Aucun workflow trouvé pour scan_id={scan_id}")
+            print(f"⚠️ Aucun workflow trouvé pour scan_id={scan_id} – tentative de fallback via la base de données")
+            try:
+                conn = get_db_connection()
+                cursor = conn.cursor()
 
-        # Pagination pour les vulnérabilités d'un scan
+                # Récupérer les vulnérabilités liées à ce scan dans la table de liaison
+                rows = cursor.execute("""
+                    SELECT v.*
+                    FROM scan_vulnerabilities sv
+                    JOIN vulnerabilities v ON v.vulnerability_id = sv.vulnerability_id
+                    WHERE sv.scan_id = ?
+                """, (scan_id,)).fetchall()
+
+                if rows:
+                    print(f"✅ Fallback DB: {len(rows)} vulnérabilités retrouvées pour scan_id={scan_id}")
+                    for row in rows:
+                        vuln_dict = dict(row)
+                        vulnerabilities_list.append({
+                            "vulnerability_id": vuln_dict.get("vulnerability_id", ""),
+                            "name": vuln_dict.get("name", ""),
+                            "severity": vuln_dict.get("severity", "MEDIUM"),
+                            "cvss_score": vuln_dict.get("cvss_score"),
+                            "description": vuln_dict.get("description", ""),
+                            "affected_service": vuln_dict.get("affected_service", ""),
+                            "affected_port": vuln_dict.get("affected_port"),
+                            "status": "open",
+                            "is_false_positive": False,
+                            "false_positive_confidence": None,
+                            "false_positive_reasoning": None,
+                            "solution_links": [],
+                            "primary_solution_link": None,
+                            "references": json.loads(vuln_dict.get("refs") or "[]"),
+                            "detection_location": vuln_dict.get("detection_method"),
+                            "validation": {
+                                "is_valid": None,
+                                "confidence_score": 0.0,
+                                "risk_assessment": "UNKNOWN",
+                                "evidence": {
+                                    "validation_notes": "Données chargées depuis la base, sans rapport de validation"
+                                }
+                            }
+                        })
+
+                    # Infos minimales de scan depuis la dernière entrée de liaison
+                    scan_info = {
+                        "scan_id": scan_id,
+                        "workflow_id": None,
+                        "target": "Unknown",
+                        "scan_type": "unknown",
+                        "started_at": None,
+                        "completed_at": None,
+                        "total_vulnerabilities": len(vulnerabilities_list),
+                    }
+
+                conn.close()
+            except Exception as db_fallback_error:
+                print(f"⚠️ Erreur lors du fallback DB pour scan_id={scan_id}: {db_fallback_error}")
+
+        # Pagination pour les vulnérabilités d'un scan (workflow ou DB)
         total = len(vulnerabilities_list)
         page = 1
         page_size = min(limit, 100)  # Max 100 par page
