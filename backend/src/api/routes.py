@@ -516,65 +516,50 @@ async def get_overview_stats(
     db: Database = Depends(get_database),
 ):
     """
-    Statistiques globales pour le dashboard (approximation basée sur les workflows).
+    Statistiques globales pour le dashboard (depuis la base de données).
     """
     try:
-        results_dir = Path("data/workflow_results")
-        total_scans = 0
-        total_vulns = 0
-        critical_vulns = 0
-
+        # Compter les workflows (scans) depuis la DB
+        workflows = db.select('workflows')
+        total_scans = len(workflows)
+        
+        # Compter les vulnérabilités depuis la DB
+        vulnerabilities = db.select('vulnerabilities')
+        total_vulns = len(vulnerabilities)
+        
+        # Compter les vulnérabilités critiques
+        critical_vulns = len([v for v in vulnerabilities if v.get('severity', '').upper() == 'CRITICAL'])
+        
+        # Compter les scans récents (24h)
+        now = datetime.utcnow()
         recent_scans = 0
-
-        if results_dir.exists():
-            # On trie les fichiers par date de modification pour compter les scans récents
-            wf_files = sorted(
-                results_dir.glob("*.json"),
-                key=lambda p: p.stat().st_mtime,
-                reverse=True,
-            )
-            now = datetime.utcnow()
-            for wf_file in results_dir.glob("*.json"):
+        for wf in workflows:
+            completed_at = wf.get('completed_at') or wf.get('started_at')
+            if completed_at:
                 try:
-                    with open(wf_file, "r", encoding="utf-8") as f:
-                        data = json.load(f)
-                    total_scans += 1
-                    analysis = data.get("analysis_result") or {}
-                    vulns = analysis.get("vulnerabilities", []) or []
-                    if not vulns:
-                        scan_vulns = (data.get("scan_result") or {}).get(
-                            "vulnerabilities", []
-                        ) or []
-                        vulns = scan_vulns
-                    total_vulns += len(vulns)
-                    critical_vulns += sum(
-                        1
-                        for v in vulns
-                        if isinstance(v, dict)
-                        and str(v.get("severity", "")).upper() == "CRITICAL"
-                    )
+                    if isinstance(completed_at, str):
+                        dt = datetime.fromisoformat(completed_at.replace('Z', '+00:00'))
+                    else:
+                        dt = completed_at
+                    if (now - dt).total_seconds() <= 24 * 3600:
+                        recent_scans += 1
                 except Exception:
-                    continue
-
-                    # Considérer les scans des dernières 24h comme récents
-                    completed_at = data.get("completed_at") or data.get("started_at")
-                    if completed_at:
-                        try:
-                            dt = datetime.fromisoformat(completed_at)
-                            if (now - dt).total_seconds() <= 24 * 3600:
-                                recent_scans += 1
-                        except Exception:
-                            pass
-
-        # Valeurs par défaut pour les champs attendus par le dashboard
-        average_cvss = round(total_vulns / total_scans, 2) if total_scans > 0 else 0.0
+                    pass
+        
+        # Calculer la moyenne CVSS
+        cvss_scores = [v.get('cvss_score') for v in vulnerabilities if v.get('cvss_score')]
+        average_cvss = round(sum(cvss_scores) / len(cvss_scores), 2) if cvss_scores else 0.0
+        
+        # Compter les scripts
+        scripts = db.select('scripts')
+        total_scripts = len(scripts)
 
         response = {
             "total_scans": total_scans,
             "recent_scans": recent_scans,
             "total_vulnerabilities": total_vulns,
             "critical_vulnerabilities": critical_vulns,
-            "total_scripts": 0,
+            "total_scripts": total_scripts,
             "average_cvss": average_cvss,
         }
         return response
@@ -588,35 +573,20 @@ async def get_severity_distribution(
     db: Database = Depends(get_database),
 ):
     """
-    Répartition des vulnérabilités par sévérité pour le dashboard.
+    Répartition des vulnérabilités par sévérité pour le dashboard (depuis la DB).
     """
     try:
-        # On regarde dans les fichiers workflow, comme pour overview
-        results_dir = Path("data/workflow_results")
+        # Compter depuis la table vulnerabilities
+        vulnerabilities = db.select('vulnerabilities')
         counts = {"CRITICAL": 0, "HIGH": 0, "MEDIUM": 0, "LOW": 0, "UNKNOWN": 0}
-
-        if results_dir.exists():
-            for wf_file in results_dir.glob("*.json"):
-                try:
-                    with open(wf_file, "r", encoding="utf-8") as f:
-                        data = json.load(f)
-                    analysis = data.get("analysis_result") or {}
-                    vulns = analysis.get("vulnerabilities", []) or []
-                    if not vulns:
-                        scan_vulns = (data.get("scan_result") or {}).get(
-                            "vulnerabilities", []
-                        ) or []
-                        vulns = scan_vulns
-                    for v in vulns:
-                        if not isinstance(v, dict):
-                            continue
-                        sev = str(v.get("severity", "UNKNOWN")).upper()
-                        if sev not in counts:
-                            sev = "UNKNOWN"
-                        counts[sev] += 1
-                except Exception:
-                    continue
-
+        
+        for vuln in vulnerabilities:
+            severity = str(vuln.get('severity', 'UNKNOWN')).upper()
+            if severity in counts:
+                counts[severity] += 1
+            else:
+                counts["UNKNOWN"] += 1
+        
         labels = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "UNKNOWN"]
         values = [counts[l] for l in labels]
         colors = ["#DC2626", "#F97316", "#FACC15", "#22C55E", "#9CA3AF"]
@@ -626,6 +596,11 @@ async def get_severity_distribution(
             "values": values,
             "colors": colors,
         }
+    except Exception as e:
+        logger.error(f"Erreur stats severity-distribution: {e}")
+        raise HTTPException(
+            status_code=500, detail="Erreur statistiques severity-distribution"
+        )
 
 
 @router.get("/stats/timeline", tags=["stats"])
@@ -633,29 +608,27 @@ async def get_timeline_stats(
     db: Database = Depends(get_database),
 ):
     """
-    Timeline des scans pour le dashboard.
+    Timeline des scans pour le dashboard (depuis la DB).
     On renvoie un format directement compatible avec Chart.js (labels + dataset).
     """
     try:
-        results_dir = Path("data/workflow_results")
+        # Récupérer les workflows depuis la DB
+        workflows = db.select('workflows', order_by='started_at ASC')
         timeline_counts: Dict[str, int] = {}
 
-        if results_dir.exists():
-            for wf_file in results_dir.glob("*.json"):
-                try:
-                    with open(wf_file, "r", encoding="utf-8") as f:
-                        data = json.load(f)
-                    completed_at = data.get("completed_at") or data.get("started_at")
-                    if not completed_at:
-                        continue
-                    try:
-                        dt = datetime.fromisoformat(completed_at)
-                    except Exception:
-                        continue
-                    day = dt.date().isoformat()
-                    timeline_counts[day] = timeline_counts.get(day, 0) + 1
-                except Exception:
-                    continue
+        for wf in workflows:
+            completed_at = wf.get('completed_at') or wf.get('started_at')
+            if not completed_at:
+                continue
+            try:
+                if isinstance(completed_at, str):
+                    dt = datetime.fromisoformat(completed_at.replace('Z', '+00:00'))
+                else:
+                    dt = completed_at
+                day = dt.date().isoformat()
+                timeline_counts[day] = timeline_counts.get(day, 0) + 1
+            except Exception:
+                continue
 
         labels = sorted(timeline_counts.keys())
         values = [timeline_counts[d] for d in labels]
@@ -679,11 +652,6 @@ async def get_timeline_stats(
         raise HTTPException(
             status_code=500, detail="Erreur statistiques timeline"
         )
-    except Exception as e:
-        logger.error(f"Erreur stats severity-distribution: {e}")
-        raise HTTPException(
-            status_code=500, detail="Erreur statistiques severity-distribution"
-        )
 
 
 @router.get("/stats/top-vulnerabilities", tags=["stats"])
@@ -692,48 +660,26 @@ async def get_top_vulnerabilities(
     db: Database = Depends(get_database),
 ):
     """
-    Top vulnérabilités (approximatif) pour le dashboard.
+    Top vulnérabilités pour le dashboard (depuis la DB).
     """
     try:
-        results_dir = Path("data/workflow_results")
-        vulns_index: Dict[str, Dict[str, Any]] = {}
-
-        if results_dir.exists():
-            for wf_file in results_dir.glob("*.json"):
-                try:
-                    with open(wf_file, "r", encoding="utf-8") as f:
-                        data = json.load(f)
-                    analysis = data.get("analysis_result") or {}
-                    vulns = analysis.get("vulnerabilities", []) or []
-                    if not vulns:
-                        scan_vulns = (data.get("scan_result") or {}).get(
-                            "vulnerabilities", []
-                        ) or []
-                        vulns = scan_vulns
-                    for v in vulns:
-                        if not isinstance(v, dict):
-                            continue
-                        vid = v.get("vulnerability_id") or v.get("id")
-                        if not vid:
-                            continue
-                        sev = str(v.get("severity", "UNKNOWN")).upper()
-                        score = float(v.get("cvss_score") or 0.0)
-                        key = vid
-                        existing = vulns_index.get(key)
-                        if not existing or score > existing.get("cvss_score", 0):
-                            vulns_index[key] = {
-                                "vulnerability_id": vid,
-                                "name": v.get("name") or v.get("title") or vid,
-                                "severity": sev,
-                                "cvss_score": score,
-                                "description": v.get("description", ""),
-                            }
-                except Exception:
-                    continue
-
-        top = sorted(
-            vulns_index.values(), key=lambda x: x.get("cvss_score", 0), reverse=True
-        )[:limit]
+        # Récupérer les vulnérabilités depuis la DB, triées par CVSS
+        vulnerabilities = db.select(
+            'vulnerabilities',
+            order_by='cvss_score DESC',
+            limit=limit
+        )
+        
+        top = []
+        for vuln in vulnerabilities:
+            top.append({
+                "vulnerability_id": vuln.get('vulnerability_id', ''),
+                "name": vuln.get('name', ''),
+                "severity": vuln.get('severity', 'UNKNOWN'),
+                "cvss_score": vuln.get('cvss_score', 0.0) or 0.0,
+                "description": vuln.get('description', ''),
+            })
+        
         return {"vulnerabilities": top}
     except Exception as e:
         logger.error(f"Erreur stats top-vulnerabilities: {e}")

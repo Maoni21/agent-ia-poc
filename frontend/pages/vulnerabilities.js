@@ -9,76 +9,40 @@ import {
   InputAdornment,
   CircularProgress,
   Alert,
+  MenuItem,
+  FormControl,
+  InputLabel,
+  Select,
+  Button,
 } from '@mui/material';
-import { Search } from '@mui/icons-material';
+import { Search, Download } from '@mui/icons-material';
 import Layout from '../components/Layout';
 import VulnerabilityCard from '../components/VulnerabilityCard';
-import scanService from '../lib/services/scanService';
-import vulnerabilityService from '../lib/services/vulnerabilityService';
+import vulnerabilitiesService from '../lib/services/vulnerabilitiesService';
+import analysisService from '../lib/services/analysisService';
 
 export default function VulnerabilitiesPage() {
   const [vulnerabilities, setVulnerabilities] = useState([]);
   const [filteredVulnerabilities, setFilteredVulnerabilities] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
+  const [severityFilter, setSeverityFilter] = useState('');
+  const [falsePositiveFilter, setFalsePositiveFilter] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  useEffect(() => {
-    loadAllVulnerabilities();
-  }, []);
-
-  useEffect(() => {
-    if (!searchTerm.trim()) {
-      setFilteredVulnerabilities(vulnerabilities);
-    } else {
-      const filtered = vulnerabilities.filter(
-        (vuln) =>
-          vuln.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-          vuln.vulnerability_id?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-          vuln.description?.toLowerCase().includes(searchTerm.toLowerCase())
-      );
-      setFilteredVulnerabilities(filtered);
-    }
-  }, [searchTerm, vulnerabilities]);
-
-  const loadAllVulnerabilities = async () => {
+  const loadVulnerabilities = async () => {
     setLoading(true);
     setError(null);
-    
+
     try {
-      const data = await scanService.getScans(100);
-      const scans = data.scans || [];
-      const allVulns = [];
-      
-      for (const scan of scans) {
-        if (scan.status === 'completed') {
-          try {
-            const results = await scanService.getScanResults(scan.scan_id);
-            
-            if (results.analysis_result?.vulnerabilities) {
-              allVulns.push(...results.analysis_result.vulnerabilities);
-            } else if (results.scan_result?.vulnerabilities) {
-              allVulns.push(...results.scan_result.vulnerabilities);
-            }
-          } catch (err) {
-            console.warn(`Impossible de charger les résultats pour ${scan.scan_id}:`, err);
-          }
-        }
-      }
-      
-      const uniqueVulns = [];
-      const seenIds = new Set();
-      
-      for (const vuln of allVulns) {
-        const id = vuln.vulnerability_id || vuln.id;
-        if (id && !seenIds.has(id)) {
-          seenIds.add(id);
-          uniqueVulns.push(vuln);
-        }
-      }
-      
-      setVulnerabilities(uniqueVulns);
-      setFilteredVulnerabilities(uniqueVulns);
+      const data = await vulnerabilitiesService.getVulnerabilities({
+        limit: 200,
+        severity: severityFilter || undefined,
+        search: searchTerm || undefined,
+      });
+      const vulns = data.vulnerabilities || [];
+      setVulnerabilities(vulns);
+      setFilteredVulnerabilities(applyFalsePositiveFilter(vulns, falsePositiveFilter));
     } catch (err) {
       setError(err.message || 'Erreur lors du chargement des vulnérabilités');
       console.error('Erreur chargement vulnérabilités:', err);
@@ -87,30 +51,83 @@ export default function VulnerabilitiesPage() {
     }
   };
 
-  const handleAnalyzeVulnerability = async (vulnerabilityId) => {
-    try {
-      const result = await vulnerabilityService.analyzeVulnerabilities(
-        [vulnerabilityId],
-        'Unknown System'
+  useEffect(() => {
+    loadVulnerabilities();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [severityFilter]);
+
+  useEffect(() => {
+    // Filtrage client sur la base de la liste actuelle
+    let base = [...vulnerabilities];
+
+    if (searchTerm.trim()) {
+      const term = searchTerm.toLowerCase();
+      base = base.filter(
+        (vuln) =>
+          vuln.name?.toLowerCase().includes(term) ||
+          vuln.vulnerability_id?.toLowerCase().includes(term) ||
+          vuln.description?.toLowerCase().includes(term),
       );
-      alert('Analyse terminée ! Consultez les résultats dans la console.');
-      console.log('Résultat analyse:', result);
+    }
+
+    setFilteredVulnerabilities(applyFalsePositiveFilter(base, falsePositiveFilter));
+  }, [searchTerm, falsePositiveFilter, vulnerabilities]);
+
+  const applyFalsePositiveFilter = (list, fpFilter) => {
+    if (!fpFilter) return list;
+    if (fpFilter === 'false_positive') {
+      return list.filter((v) => v.is_false_positive);
+    }
+    if (fpFilter === 'true_positive') {
+      return list.filter((v) => v.is_false_positive === false);
+    }
+    return list;
+  };
+
+  const handleAnalyzeAll = async () => {
+    if (filteredVulnerabilities.length === 0) return;
+    const ids = filteredVulnerabilities
+      .map((v) => v.vulnerability_id)
+      .filter(Boolean);
+    try {
+      const result = await analysisService.analyzeSelected({
+        vulnerabilityIds: ids,
+        targetSystem: 'Unknown System',
+      });
+      alert(
+        `Analyse lancée / terminée.\nAnalysis ID: ${result.analysis_id || 'n/a'}\n${
+          result.message || ''
+        }`,
+      );
     } catch (err) {
-      alert('Erreur lors de l\'analyse: ' + err.message);
+      alert('Erreur lors de l’analyse: ' + (err.message || 'inconnue'));
     }
   };
 
-  const handleGenerateScript = async (vulnerabilityId) => {
+  const handleCorrectAll = async () => {
+    if (filteredVulnerabilities.length === 0) return;
+    const ids = filteredVulnerabilities
+      .map((v) => v.vulnerability_id)
+      .filter(Boolean);
     try {
-      const result = await vulnerabilityService.generateScripts(
-        [vulnerabilityId],
-        'ubuntu',
-        'bash'
-      );
-      alert('Script généré ! Consultez les résultats dans la console.');
-      console.log('Résultat génération:', result);
+      const result = await analysisService.correctSelected({
+        vulnerabilityIds: ids,
+        targetSystem: 'ubuntu',
+      });
+      alert(result.message || 'Génération de scripts terminée (voir console).');
+      console.log('Scripts générés:', result);
     } catch (err) {
-      alert('Erreur lors de la génération: ' + err.message);
+      alert('Erreur lors de la génération de scripts: ' + (err.message || 'inconnue'));
+    }
+  };
+
+  const handleExportCsv = async () => {
+    try {
+      await vulnerabilitiesService.exportCsv({
+        severity: severityFilter || undefined,
+      });
+    } catch (err) {
+      alert('Erreur lors de lexport CSV: ' + (err.message || 'inconnue'));
     }
   };
 
@@ -132,19 +149,61 @@ export default function VulnerabilitiesPage() {
           )}
 
           <Paper sx={{ p: 2, mb: 3 }}>
-            <TextField
-              fullWidth
-              placeholder="Rechercher une vulnérabilité..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              InputProps={{
-                startAdornment: (
-                  <InputAdornment position="start">
-                    <Search />
-                  </InputAdornment>
-                ),
-              }}
-            />
+            <Box display="flex" flexDirection={{ xs: 'column', md: 'row' }} gap={2}>
+              <TextField
+                fullWidth
+                placeholder="Rechercher une vulnérabilité..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                InputProps={{
+                  startAdornment: (
+                    <InputAdornment position="start">
+                      <Search />
+                    </InputAdornment>
+                  ),
+                }}
+              />
+
+              <FormControl sx={{ minWidth: 160 }}>
+                <InputLabel>Sévérité</InputLabel>
+                <Select
+                  value={severityFilter}
+                  label="Sévérité"
+                  onChange={(e) => setSeverityFilter(e.target.value)}
+                >
+                  <MenuItem value="">Toutes</MenuItem>
+                  <MenuItem value="CRITICAL">Critique</MenuItem>
+                  <MenuItem value="HIGH">Élevée</MenuItem>
+                  <MenuItem value="MEDIUM">Moyenne</MenuItem>
+                  <MenuItem value="LOW">Faible</MenuItem>
+                </Select>
+              </FormControl>
+
+              <FormControl sx={{ minWidth: 180 }}>
+                <InputLabel>Faux positifs</InputLabel>
+                <Select
+                  value={falsePositiveFilter}
+                  label="Faux positifs"
+                  onChange={(e) => setFalsePositiveFilter(e.target.value)}
+                >
+                  <MenuItem value="">Tous</MenuItem>
+                  <MenuItem value="false_positive">Faux positifs</MenuItem>
+                  <MenuItem value="true_positive">Vrais positifs</MenuItem>
+                </Select>
+              </FormControl>
+
+              <Box display="flex" gap={1} alignItems="center">
+                <Button variant="outlined" startIcon={<Download />} onClick={handleExportCsv}>
+                  Export CSV
+                </Button>
+                <Button variant="contained" onClick={handleAnalyzeAll}>
+                  Analyser (sélection filtrée)
+                </Button>
+                <Button variant="contained" color="success" onClick={handleCorrectAll}>
+                  Générer scripts (filtrés)
+                </Button>
+              </Box>
+            </Box>
           </Paper>
 
           {loading ? (
@@ -166,8 +225,6 @@ export default function VulnerabilitiesPage() {
                   <VulnerabilityCard
                     key={vuln.vulnerability_id || vuln.id || index}
                     vulnerability={vuln}
-                    onAnalyze={handleAnalyzeVulnerability}
-                    onGenerateScript={handleGenerateScript}
                   />
                 ))
               )}

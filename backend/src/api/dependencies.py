@@ -7,10 +7,10 @@ from typing import Dict, Any, Optional
 from fastapi import Depends, HTTPException
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
-# Ajouter backend/src au PYTHONPATH pour que les imports "from src." fonctionnent
-BACKEND_SRC_DIR = Path(__file__).parent.parent
-if str(BACKEND_SRC_DIR) not in sys.path:
-    sys.path.insert(0, str(BACKEND_SRC_DIR))
+# Ajouter backend au PYTHONPATH pour que les imports \"from src.\" pointent sur le backend unifié
+BACKEND_DIR = Path(__file__).resolve().parents[2]
+if str(BACKEND_DIR) not in sys.path:
+    sys.path.insert(0, str(BACKEND_DIR))
 
 from src.database.database import Database
 from src.core.supervisor import Supervisor

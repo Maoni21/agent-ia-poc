@@ -38,6 +38,7 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - AI_PROVIDER=${AI_PROVIDER:-anthropic}
+      - VULNERS_API_KEY=${VULNERS_API_KEY:-}
       - PYTHONPATH=/app/src
     depends_on:
       db:

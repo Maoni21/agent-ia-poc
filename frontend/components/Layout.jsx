@@ -14,9 +14,12 @@ const Layout = ({ children }) => {
   const router = useRouter();
 
   const navItems = [
-    { path: '/', label: 'Accueil' },
+    { path: '/', label: 'Dashboard' },
     { path: '/scans', label: 'Scans' },
     { path: '/vulnerabilities', label: 'Vulnérabilités' },
+    { path: '/scripts', label: 'Scripts' },
+    { path: '/groups', label: 'Groupes' },
+    { path: '/analysis-history', label: 'Historique IA' },
   ];
 
   return (

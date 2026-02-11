@@ -17,13 +17,13 @@ import uvicorn
 import sys
 from pathlib import Path
 
-# Ajouter backend/src au PYTHONPATH pour que les imports "from src." fonctionnent
-BACKEND_SRC_DIR = Path(__file__).parent.parent
-if str(BACKEND_SRC_DIR) not in sys.path:
-    sys.path.insert(0, str(BACKEND_SRC_DIR))
+# Ajouter backend au PYTHONPATH pour que les imports \"from src.\" pointent sur le backend unifié
+BACKEND_DIR = Path(__file__).resolve().parents[2]
+if str(BACKEND_DIR) not in sys.path:
+    sys.path.insert(0, str(BACKEND_DIR))
 
 # Ajouter la racine du projet pour config
-ROOT_DIR = BACKEND_SRC_DIR.parent.parent
+ROOT_DIR = BACKEND_DIR.parent
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 

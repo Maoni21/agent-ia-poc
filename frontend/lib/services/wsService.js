@@ -30,14 +30,18 @@ export class WebSocketService {
     
     this.ws.onmessage = (event) => {
       try {
-        const data = JSON.parse(event.data);
+        const raw = (event.data || '').toString().trim();
+        
+        // Certains messages peuvent être de simples "ping"/"pong" texte
+        if (raw === 'pong' || raw === 'ping') {
+          return;
+        }
+
+        const data = JSON.parse(raw);
         
         // Gérer les différents types de messages
         if (data.type === 'progress_update') {
           this.onProgress(data.data);
-        } else if (data === 'pong') {
-          // Réponse au ping, ne rien faire
-          return;
         } else {
           // Message générique
           this.onProgress(data);

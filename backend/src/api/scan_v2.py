@@ -12,11 +12,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, HTTPException, BackgroundTasks
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, HTTPException, BackgroundTasks, Depends
 
 from config import get_config
 from src.core.supervisor import Supervisor, WorkflowType
 from src.utils.logger import setup_logger
+from .dependencies import get_database
 
 from .schemas import (
     AnalysisRequest,
@@ -176,13 +177,15 @@ async def launch_scan(request: Dict[str, Any], background_tasks: BackgroundTasks
 
 
 @router.get("/scans")
-async def list_scans(limit: int = 50):
+async def list_scans(limit: int = 50, db = Depends(get_database)):
     """Liste tous les scans (actifs et terminés) pour le dashboard."""
     try:
         scans_list: List[Dict[str, Any]] = []
 
         # Scans actifs (en mémoire)
+        active_workflow_ids = set()
         for scan_id, scan_data in active_scans.items():
+            active_workflow_ids.add(scan_data.get("workflow_id"))
             scans_list.append(
                 {
                     "scan_id": scan_id,
@@ -197,60 +200,95 @@ async def list_scans(limit: int = 50):
                 }
             )
 
-        # Scans terminés depuis les fichiers workflow
-        search_dirs = _get_workflow_search_dirs()
-        for workflows_dir in search_dirs:
-            for workflow_file in workflows_dir.glob("*.json"):
-                try:
-                    with open(workflow_file, "r", encoding="utf-8") as f:
-                        workflow_data = json.load(f)
-                        workflow_id = workflow_file.stem
-
-                    found_in_active = any(
-                        scan_data.get("workflow_id") == workflow_id
-                        for scan_data in active_scans.values()
-                    )
-                    if found_in_active:
-                        continue
-
-                    scan_result = workflow_data.get("scan_result", {})
-                    analysis_result = workflow_data.get("analysis_result", {})
-
-                    vulnerabilities_count = 0
-                    if analysis_result:
-                        vulnerabilities_count = len(
-                            analysis_result.get("vulnerabilities", [])
-                        )
-                    elif scan_result:
-                        vulnerabilities_count = len(
-                            scan_result.get("vulnerabilities", [])
-                        )
-
-                    scans_list.append(
-                        {
-                            "scan_id": workflow_id,
-                            "target": workflow_data.get("target", "N/A"),
-                            "scan_type": workflow_data.get(
-                                "workflow_type",
-                                workflow_data.get("scan_type", "unknown"),
-                            ),
-                            "workflow_type": workflow_data.get(
-                                "workflow_type", "unknown"
-                            ),
-                            "status": "completed",
-                            "progress": 100,
-                            "current_step": "Terminé",
-                            "started_at": workflow_data.get(
-                                "started_at", workflow_data.get("created_at")
-                            ),
-                            "completed_at": workflow_data.get("completed_at"),
-                            "vulnerabilities_found": vulnerabilities_count,
-                            "workflow_id": workflow_id,
-                        }
-                    )
-                except Exception as e:
-                    logger.warning(f"Erreur lecture workflow {workflow_file}: {e}")
+        # Scans terminés depuis la base de données (priorité)
+        try:
+            workflows = db.select(
+                'workflows',
+                order_by='started_at DESC',
+                limit=limit * 2  # Récupérer plus pour filtrer les actifs
+            )
+            
+            for workflow in workflows:
+                workflow_id = workflow['workflow_id']
+                
+                # Ignorer si déjà dans les scans actifs
+                if workflow_id in active_workflow_ids:
                     continue
+                
+                # Récupérer le scan associé si présent
+                scan = None
+                if workflow.get('scan_id'):
+                    scan = db.select_one('scans', where={'scan_id': workflow['scan_id']})
+                
+                scans_list.append({
+                    "scan_id": workflow_id,
+                    "target": workflow['target'],
+                    "scan_type": workflow.get('workflow_type', 'unknown'),
+                    "workflow_type": workflow.get('workflow_type', 'unknown'),
+                    "status": workflow['status'],
+                    "progress": 100 if workflow['status'] == 'completed' else 0,
+                    "current_step": "Terminé" if workflow['status'] == 'completed' else workflow.get('current_step', 'N/A'),
+                    "started_at": workflow['started_at'],
+                    "completed_at": workflow.get('completed_at'),
+                    "vulnerabilities_found": workflow.get('vulnerabilities_found', 0),
+                    "workflow_id": workflow_id,
+                })
+        except Exception as e:
+            logger.warning(f"Erreur lecture workflows depuis DB: {e}")
+
+        # Fallback sur fichiers JSON pour compatibilité (seulement si pas trouvé en DB)
+        if len(scans_list) < limit:
+            search_dirs = _get_workflow_search_dirs()
+            for workflows_dir in search_dirs:
+                for workflow_file in workflows_dir.glob("*.json"):
+                    try:
+                        workflow_id = workflow_file.stem
+                        
+                        # Ignorer si déjà dans la liste
+                        if any(s.get("workflow_id") == workflow_id for s in scans_list):
+                            continue
+                        
+                        with open(workflow_file, "r", encoding="utf-8") as f:
+                            workflow_data = json.load(f)
+
+                        scan_result = workflow_data.get("scan_result", {})
+                        analysis_result = workflow_data.get("analysis_result", {})
+
+                        vulnerabilities_count = 0
+                        if analysis_result:
+                            vulnerabilities_count = len(
+                                analysis_result.get("vulnerabilities", [])
+                            )
+                        elif scan_result:
+                            vulnerabilities_count = len(
+                                scan_result.get("vulnerabilities", [])
+                            )
+
+                        scans_list.append(
+                            {
+                                "scan_id": workflow_id,
+                                "target": workflow_data.get("target", "N/A"),
+                                "scan_type": workflow_data.get(
+                                    "workflow_type",
+                                    workflow_data.get("scan_type", "unknown"),
+                                ),
+                                "workflow_type": workflow_data.get(
+                                    "workflow_type", "unknown"
+                                ),
+                                "status": "completed",
+                                "progress": 100,
+                                "current_step": "Terminé",
+                                "started_at": workflow_data.get(
+                                    "started_at", workflow_data.get("created_at")
+                                ),
+                                "completed_at": workflow_data.get("completed_at"),
+                                "vulnerabilities_found": vulnerabilities_count,
+                                "workflow_id": workflow_id,
+                            }
+                        )
+                    except Exception as e:
+                        logger.warning(f"Erreur lecture workflow {workflow_file}: {e}")
+                        continue
 
         scans_list.sort(key=lambda x: x.get("started_at", ""), reverse=True)
 
@@ -264,24 +302,259 @@ async def list_scans(limit: int = 50):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+def _find_workflow_for_scan(scan_id: str) -> Optional[Dict[str, Any]]:
+    """
+    Recherche dans les fichiers de workflow celui qui correspond à ce scan_id.
+
+    On matche contre:
+    - le nom du fichier (workflow_id)
+    - le champ racine "scan_id" éventuel
+    - le champ "scan_id" interne dans scan_result
+    """
+    search_dirs = _get_workflow_search_dirs()
+    for workflows_dir in search_dirs:
+        if not workflows_dir.exists():
+            continue
+        for workflow_file in workflows_dir.glob("*.json"):
+            try:
+                with open(workflow_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+
+                workflow_id = workflow_file.stem
+                wf_scan_id = data.get("scan_id")
+                scan_result = data.get("scan_result") or {}
+                sr_scan_id = scan_result.get("scan_id") if scan_result else None
+
+                if scan_id in (workflow_id, wf_scan_id, sr_scan_id):
+                    return {
+                        "file": workflow_file,
+                        "data": data,
+                        "workflow_id": workflow_id,
+                    }
+            except Exception as e:
+                logger.warning(f"Erreur lecture workflow {workflow_file}: {e}")
+                continue
+    return None
+
+
 @router.get("/scans/{scan_id}/status")
 async def get_scan_status(scan_id: str):
-    """Statut d'un scan (utilisé par le dashboard)."""
-    if scan_id not in active_scans:
-        raise HTTPException(status_code=404, detail="Scan non trouvé")
-    return active_scans[scan_id]
+    """
+    Statut d'un scan (utilisé par le dashboard).
+
+    - Si le scan est encore actif: on lit depuis active_scans
+    - Sinon, on cherche un workflow terminé correspondant et on renvoie
+      un statut synthétique "completed".
+    """
+    # 1) Scans actifs en mémoire
+    scan_data = active_scans.get(scan_id)
+    if scan_data:
+        return scan_data
+
+    # 2) Scans terminés (workflows sur disque)
+    wf_info = _find_workflow_for_scan(scan_id)
+    if wf_info:
+        data = wf_info["data"]
+        workflow_id = wf_info["workflow_id"]
+
+        scan_result = data.get("scan_result") or {}
+        analysis_result = data.get("analysis_result") or {}
+
+        vulnerabilities_count = 0
+        if analysis_result:
+            vulns = analysis_result.get("vulnerabilities") or []
+            if isinstance(vulns, list):
+                vulnerabilities_count = len(vulns)
+        elif scan_result:
+            vulns = scan_result.get("vulnerabilities") or []
+            if isinstance(vulns, list):
+                vulnerabilities_count = len(vulns)
+
+        return {
+            "scan_id": scan_id,
+            "target": data.get("target", "N/A"),
+            "scan_type": data.get("workflow_type", data.get("scan_type", "unknown")),
+            "workflow_type": data.get("workflow_type", "unknown"),
+            "status": "completed",
+            "progress": 100,
+            "current_step": "Terminé",
+            "message": "Scan terminé",
+            "started_at": data.get("started_at", data.get("created_at")),
+            "completed_at": data.get("completed_at"),
+            "vulnerabilities_found": vulnerabilities_count,
+            "workflow_id": workflow_id,
+            "estimated_time_remaining": 0,
+        }
+
+    # 3) Si rien trouvé
+    raise HTTPException(status_code=404, detail="Scan non trouvé")
+
+
+def _reconstruct_workflow_json_from_db(scan_id: str, db) -> Optional[Dict[str, Any]]:
+    """
+    Reconstruit le format JSON d'un workflow depuis la base de données
+    
+    Args:
+        scan_id: ID du scan ou workflow
+        db: Instance de Database
+        
+    Returns:
+        Dict avec le format JSON du workflow ou None si non trouvé
+    """
+    try:
+        # Chercher le workflow par workflow_id ou scan_id
+        workflow = db.select_one('workflows', where={'workflow_id': scan_id})
+        if not workflow:
+            # Essayer de trouver via scan_id dans scans
+            scan = db.select_one('scans', where={'scan_id': scan_id})
+            if scan:
+                # Trouver le workflow qui référence ce scan
+                workflows = db.select('workflows', where={'scan_id': scan_id})
+                if workflows:
+                    workflow = workflows[0]
+        
+        if not workflow:
+            return None
+        
+        workflow_id = workflow['workflow_id']
+        
+        # Reconstruire scan_result si présent
+        scan_result = None
+        if workflow.get('scan_id'):
+            scan = db.select_one('scans', where={'scan_id': workflow['scan_id']})
+            if scan:
+                # Récupérer les vulnérabilités du scan
+                scan_vulns = db.select('scan_vulnerabilities', where={'scan_id': scan['scan_id']})
+                vulnerabilities = []
+                for sv in scan_vulns:
+                    vuln = db.select_one('vulnerabilities', where={'vulnerability_id': sv['vulnerability_id']})
+                    if vuln:
+                        vuln_dict = dict(vuln)
+                        vuln_dict['cve_ids'] = json.loads(vuln_dict.get('cve_ids', '[]'))
+                        vuln_dict['references'] = json.loads(vuln_dict.get('references', '[]'))
+                        vulnerabilities.append(vuln_dict)
+                
+                scan_result = {
+                    'scan_id': scan['scan_id'],
+                    'target': scan['target'],
+                    'scan_type': scan['scan_type'],
+                    'started_at': scan['started_at'],
+                    'completed_at': scan['completed_at'],
+                    'duration': scan['duration'],
+                    'host_status': scan['host_status'],
+                    'open_ports': json.loads(scan.get('open_ports', '[]')),
+                    'services': [],  # Peut être enrichi plus tard
+                    'vulnerabilities': vulnerabilities
+                }
+        
+        # Reconstruire analysis_result si présent
+        analysis_result = None
+        if workflow.get('analysis_id'):
+            analysis = db.select_one('analyses', where={'analysis_id': workflow['analysis_id']})
+            if analysis:
+                # Récupérer les vulnérabilités enrichies
+                analysis_vulns = db.select('analysis_vulnerabilities', where={'analysis_id': analysis['analysis_id']})
+                enriched_vulns = []
+                for av in analysis_vulns:
+                    vuln = db.select_one('vulnerabilities', where={'vulnerability_id': av['vulnerability_id']})
+                    if vuln:
+                        vuln_dict = dict(vuln)
+                        vuln_dict.update({
+                            'ai_explanation': av.get('ai_business_impact'),  # Approximation
+                            'business_impact': av.get('ai_business_impact'),
+                            'recommended_actions': json.loads(av.get('ai_recommended_actions', '[]')),
+                            'priority_score': av.get('ai_priority_score'),
+                            'solution_links': json.loads(vuln_dict.get('solution', '[]')) if vuln_dict.get('solution') else []
+                        })
+                        enriched_vulns.append(vuln_dict)
+                
+                analysis_result = {
+                    'analysis_id': analysis['analysis_id'],
+                    'target_system': analysis['target_system'],
+                    'analyzed_at': analysis['created_at'],
+                    'analysis_summary': json.loads(analysis.get('analysis_summary', '{}')),
+                    'vulnerabilities': enriched_vulns,
+                    'remediation_plan': json.loads(analysis.get('remediation_plan', '{}')),
+                    'ai_model_used': analysis.get('ai_model_used', ''),
+                    'confidence_score': analysis.get('confidence_score', 0.0),
+                    'processing_time': analysis.get('processing_time', 0.0)
+                }
+        
+        # Reconstruire script_results si présents
+        script_results = []
+        scripts = db.select('scripts', where={'vulnerability_id': None})  # Approximatif, peut être amélioré
+        for script in scripts:
+            script_results.append({
+                'script_id': script['script_id'],
+                'vulnerability_id': script['vulnerability_id'],
+                'target_system': script['target_system'],
+                'script_type': script['script_type'],
+                'fix_script': script['script_content'],
+                'rollback_script': script.get('rollback_script'),
+                'validation_status': script.get('validation_status', 'pending'),
+                'risk_level': script.get('risk_level', 'medium')
+            })
+        
+        # Construire le résultat final au format JSON
+        result = {
+            'workflow_id': workflow_id,
+            'workflow_type': workflow['workflow_type'],
+            'target': workflow['target'],
+            'status': workflow['status'],
+            'started_at': workflow['started_at'],
+            'completed_at': workflow.get('completed_at'),
+            'duration': workflow.get('actual_duration'),
+            'total_vulnerabilities': workflow.get('vulnerabilities_found', 0),
+            'critical_vulnerabilities': workflow.get('critical_issues', 0),
+            'scripts_generated': workflow.get('scripts_generated', 0)
+        }
+        
+        if scan_result:
+            result['scan_result'] = scan_result
+        if analysis_result:
+            result['analysis_result'] = analysis_result
+        if script_results:
+            result['script_results'] = script_results
+        
+        return result
+        
+    except Exception as e:
+        logger.warning(f"Erreur reconstruction workflow depuis DB: {e}")
+        return None
 
 
 @router.get("/scans/{scan_id}/results")
-async def get_scan_results(scan_id: str):
-    """Résultats d'un scan terminé (lecture des fichiers workflow)."""
-    # Essayer de retrouver le workflow correspondant
+async def get_scan_results(scan_id: str, db = Depends(get_database)):
+    """
+    Résultats d'un scan terminé.
+    
+    Priorité:
+    1. Lecture depuis la base de données (source de vérité)
+    2. Fallback sur fichiers JSON (compatibilité)
+    """
+    # 1) Chercher dans la base de données d'abord
+    try:
+        workflow_json = _reconstruct_workflow_json_from_db(scan_id, db)
+        if workflow_json:
+            return workflow_json
+    except Exception as e:
+        logger.warning(f"Erreur lecture DB pour scan {scan_id}: {e}")
+    
+    # 2) Fallback sur fichiers JSON (compatibilité)
     search_dirs = _get_workflow_search_dirs()
     for workflows_dir in search_dirs:
+        if not workflows_dir.exists():
+            continue
         workflow_file = workflows_dir / f"{scan_id}.json"
         if workflow_file.exists():
             with open(workflow_file, "r", encoding="utf-8") as f:
                 return json.load(f)
+
+    # 3) Fallback via _find_workflow_for_scan
+    wf_info = _find_workflow_for_scan(scan_id)
+    if wf_info:
+        with open(wf_info["file"], "r", encoding="utf-8") as f:
+            return json.load(f)
 
     raise HTTPException(status_code=404, detail="Résultats non trouvés")
 

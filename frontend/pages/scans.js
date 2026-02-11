@@ -9,6 +9,11 @@ import {
   Tab,
   Alert,
   CircularProgress,
+  Button,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
 } from '@mui/material';
 import Layout from '../components/Layout';
 import ScanForm from '../components/ScanForm';
@@ -18,6 +23,7 @@ import VulnerabilityCard from '../components/VulnerabilityCard';
 import scanService from '../lib/services/scanService';
 import vulnerabilityService from '../lib/services/vulnerabilityService';
 import WebSocketService from '../lib/services/wsService';
+import scanDashboardService from '../lib/services/scanDashboardService';
 
 export default function ScanPage() {
   const [selectedScanId, setSelectedScanId] = useState(null);
@@ -29,6 +35,9 @@ export default function ScanPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
+  const [upgradePlanOpen, setUpgradePlanOpen] = useState(false);
+  const [upgradePlan, setUpgradePlan] = useState(null);
+  const [loadingUpgradePlan, setLoadingUpgradePlan] = useState(false);
 
   // Nettoyer le WebSocket lors du démontage
   useEffect(() => {
@@ -90,6 +99,7 @@ export default function ScanPage() {
       
       if (statusData.status === 'completed') {
         try {
+          // Récupérer directement le workflow complet via l'API v2
           const results = await scanService.getScanResults(scanId);
           const vulns = [];
           if (results.analysis_result?.vulnerabilities) {
@@ -100,7 +110,10 @@ export default function ScanPage() {
           setVulnerabilities(vulns);
         } catch (err) {
           console.warn('Impossible de charger les résultats:', err);
+          setVulnerabilities([]);
         }
+      } else {
+        setVulnerabilities([]);
       }
     } catch (err) {
       setError(err.message || 'Erreur lors du chargement des détails');
@@ -144,6 +157,21 @@ export default function ScanPage() {
       console.log('Résultat génération:', result);
     } catch (err) {
       alert('Erreur lors de la génération: ' + err.message);
+    }
+  };
+
+  const handleGenerateUpgradePlan = async () => {
+    if (!selectedScanId) return;
+    setUpgradePlanOpen(true);
+    setUpgradePlan(null);
+    setLoadingUpgradePlan(true);
+    try {
+      const plan = await scanDashboardService.generateUpgradePlan(selectedScanId);
+      setUpgradePlan(plan);
+    } catch (err) {
+      alert('Erreur lors de la génération du plan de mises à jour: ' + (err.message || 'inconnue'));
+    } finally {
+      setLoadingUpgradePlan(false);
     }
   };
 
@@ -218,6 +246,11 @@ export default function ScanPage() {
                         <Typography variant="body2">
                           <strong>Progression:</strong> {scanDetails.progress || 0}%
                         </Typography>
+                        <Box mt={2}>
+                          <Button variant="contained" onClick={handleGenerateUpgradePlan}>
+                            Générer un plan de mises à jour
+                          </Button>
+                        </Box>
                       </Paper>
 
                       {vulnerabilities.length > 0 && (
@@ -243,6 +276,62 @@ export default function ScanPage() {
           </Paper>
         </Container>
       </Layout>
+
+      <Dialog
+        open={upgradePlanOpen}
+        onClose={() => {
+          setUpgradePlanOpen(false);
+          setUpgradePlan(null);
+        }}
+        fullWidth
+        maxWidth="md"
+      >
+        <DialogTitle>Plan de mises à jour</DialogTitle>
+        <DialogContent dividers>
+          {loadingUpgradePlan ? (
+            <Box display="flex" justifyContent="center" p={3}>
+              <CircularProgress />
+            </Box>
+          ) : !upgradePlan ? (
+            <Typography variant="body2" color="text.secondary">
+              Aucun plan disponible pour le moment.
+            </Typography>
+          ) : (
+            <Box>
+              {upgradePlan.summary && (
+                <Box mb={2}>
+                  <Typography variant="subtitle1" gutterBottom>
+                    Résumé
+                  </Typography>
+                  <pre style={{ whiteSpace: 'pre-wrap' }}>
+                    {JSON.stringify(upgradePlan.summary, null, 2)}
+                  </pre>
+                </Box>
+              )}
+              {Array.isArray(upgradePlan.upgrade_plan) && (
+                <Box>
+                  <Typography variant="subtitle1" gutterBottom>
+                    Étapes
+                  </Typography>
+                  <pre style={{ whiteSpace: 'pre-wrap' }}>
+                    {JSON.stringify(upgradePlan.upgrade_plan, null, 2)}
+                  </pre>
+                </Box>
+              )}
+            </Box>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button
+            onClick={() => {
+              setUpgradePlanOpen(false);
+              setUpgradePlan(null);
+            }}
+          >
+            Fermer
+          </Button>
+        </DialogActions>
+      </Dialog>
     </>
   );
 }

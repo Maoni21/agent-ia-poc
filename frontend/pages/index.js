@@ -1,4 +1,7 @@
 import Head from 'next/head';
+import { Container } from '@mui/material';
+import Layout from '../components/Layout';
+import Dashboard from '../components/Dashboard';
 
 export default function HomePage() {
   return (
@@ -6,14 +9,11 @@ export default function HomePage() {
       <Head>
         <title>CyberSec AI - Dashboard</title>
       </Head>
-      {/* On réutilise le dashboard HTML d'origine dans une iframe plein écran */}
-      <div style={{ width: '100vw', height: '100vh', border: 'none', margin: 0, padding: 0 }}>
-        <iframe
-          src="/dashboard.html"
-          style={{ width: '100%', height: '100%', border: 'none' }}
-          title="CyberSec AI Dashboard"
-        />
-      </div>
+      <Layout>
+        <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
+          <Dashboard />
+        </Container>
+      </Layout>
     </>
   );
 }

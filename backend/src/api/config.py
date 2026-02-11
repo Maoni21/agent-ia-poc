@@ -103,14 +103,8 @@ API_CONFIG = {
 MIDDLEWARE_CONFIG = {
     "cors": {
         "enabled": True,
-        "allow_origins": [
-            "http://localhost:3000",  # Frontend React en développement
-            "http://localhost:3001",  # Alternative
-            "http://127.0.0.1:3000",
-            "http://127.0.0.1:3001",
-            # En production, remplacer par le vrai domaine :
-            # "https://votre-domaine.com"
-        ],
+        # En dev, on autorise tout pour éviter les soucis CORS
+        "allow_origins": ["*"],
         "allow_credentials": True,
         "allow_methods": ["*"],
         "allow_headers": ["*"],
