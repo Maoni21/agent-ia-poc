@@ -202,6 +202,11 @@ class Asset(Base):
     # Metadata
     notes: Mapped[Optional[str]] = mapped_column(Text)
 
+    # SSH credentials (chiffrés au niveau applicatif)
+    ssh_username: Mapped[Optional[str]] = mapped_column(String(255))
+    ssh_password: Mapped[Optional[bytes]] = mapped_column()
+    ssh_private_key: Mapped[Optional[bytes]] = mapped_column()
+
     # Relationships
     organization: Mapped[Organization] = relationship(back_populates="assets")
     scans: Mapped[List["Scan"]] = relationship(

@@ -248,6 +248,23 @@ class AssetBase(BaseModel):
     )
     notes: Optional[str] = Field(None, description="Notes libres")
 
+    # Credentials SSH (non exposés dans les réponses par défaut)
+    ssh_username: Optional[str] = Field(
+        None,
+        description="Nom d'utilisateur SSH pour cet asset",
+        exclude=True,
+    )
+    ssh_password: Optional[str] = Field(
+        None,
+        description="Mot de passe SSH (sera chiffré côté serveur)",
+        exclude=True,
+    )
+    ssh_private_key: Optional[str] = Field(
+        None,
+        description="Clé privée SSH (sera chiffrée côté serveur)",
+        exclude=True,
+    )
+
 
 class AssetCreate(AssetBase):
     pass
@@ -269,6 +286,21 @@ class AssetUpdate(BaseModel):
     notes: Optional[str] = None
     is_active: Optional[bool] = None
     monitoring_enabled: Optional[bool] = None
+    ssh_username: Optional[str] = Field(
+        None,
+        description="Nom d'utilisateur SSH pour cet asset",
+        exclude=True,
+    )
+    ssh_password: Optional[str] = Field(
+        None,
+        description="Mot de passe SSH (sera chiffré côté serveur)",
+        exclude=True,
+    )
+    ssh_private_key: Optional[str] = Field(
+        None,
+        description="Clé privée SSH (sera chiffrée côté serveur)",
+        exclude=True,
+    )
 
 
 class AssetResponse(AssetBase):

@@ -1,4 +1,5 @@
 import Head from 'next/head';
+import { useRouter } from 'next/router';
 import { useState, useEffect } from 'react';
 import {
   Container,
@@ -29,6 +30,7 @@ export default function VulnerabilitiesPage() {
   const [falsePositiveFilter, setFalsePositiveFilter] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const router = useRouter();
 
   const loadVulnerabilities = async () => {
     setLoading(true);
@@ -131,6 +133,12 @@ export default function VulnerabilitiesPage() {
     }
   };
 
+  const handleOpenDetails = (vuln) => {
+    const id = vuln.id || vuln.vulnerability_id;
+    if (!id) return;
+    router.push(`/vulnerabilities/${id}`);
+  };
+
   return (
     <>
       <Head>
@@ -222,10 +230,16 @@ export default function VulnerabilitiesPage() {
                 </Alert>
               ) : (
                 filteredVulnerabilities.map((vuln, index) => (
-                  <VulnerabilityCard
+                  <Box
                     key={vuln.vulnerability_id || vuln.id || index}
-                    vulnerability={vuln}
-                  />
+                    sx={{ cursor: 'pointer' }}
+                    onClick={() => handleOpenDetails(vuln)}
+                  >
+                    <VulnerabilityCard
+                      vulnerability={vuln}
+                      showActions={false}
+                    />
+                  </Box>
                 ))
               )}
             </Box>

@@ -24,6 +24,7 @@ from src.database.models import Asset
 from src.api.dependencies import get_current_user, require_permission
 from src.api.middleware.tenant_filter import tenant_scoped_query, tenant_scoped
 from src.api.schemas import AssetCreate, AssetUpdate, AssetResponse
+from src.utils.crypto import encrypt_value
 
 router = APIRouter(prefix="/api/v1", tags=["assets"])
 
@@ -113,6 +114,9 @@ def create_asset(
         monitoring_enabled=True,
         notes=payload.notes,
         tags=tags,
+        ssh_username=payload.ssh_username,
+        ssh_password=encrypt_value(payload.ssh_password) if payload.ssh_password else None,
+        ssh_private_key=encrypt_value(payload.ssh_private_key) if payload.ssh_private_key else None,
     )
 
     try:
@@ -212,6 +216,14 @@ def update_asset(
 
     if payload.tags is not None:
         asset.tags = [t.strip() for t in payload.tags if t.strip()]
+
+    # Mise à jour des credentials SSH si fournis
+    if payload.ssh_username is not None:
+        asset.ssh_username = payload.ssh_username
+    if payload.ssh_password is not None:
+        asset.ssh_password = encrypt_value(payload.ssh_password)
+    if payload.ssh_private_key is not None:
+        asset.ssh_private_key = encrypt_value(payload.ssh_private_key)
 
     db.commit()
     db.refresh(asset)
