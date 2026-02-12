@@ -15,13 +15,19 @@ if str(BACKEND_SRC_DIR) not in sys.path:
 
 import asyncio
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Optional, Dict, Any
+
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Query
 from fastapi.responses import FileResponse, StreamingResponse, JSONResponse
 import json
 
+from sqlalchemy import func
+from sqlalchemy.orm import Session
+
 from src.database.database import Database
+from src.database.init_db import get_db
+from src.database.models import Scan, Vulnerability, RemediationScript
 from src.core.supervisor import Supervisor, WorkflowType  # ← Ajouter WorkflowType
 from src.utils.logger import setup_logger
 from .dependencies import get_database, get_supervisor, get_current_user
@@ -512,47 +518,67 @@ async def validate_script(
 
 @router.get("/stats/overview", tags=["stats"])
 async def get_overview_stats(
-    supervisor: Supervisor = Depends(get_supervisor),
-    db: Database = Depends(get_database),
+    db: Session = Depends(get_db),
+    current_user: Dict[str, Any] = Depends(get_current_user),
 ):
     """
-    Statistiques globales pour le dashboard (depuis la base de données).
+    Statistiques globales pour le dashboard (PostgreSQL + multi-tenant).
     """
     try:
-        # Compter les workflows (scans) depuis la DB
-        workflows = db.select('workflows')
-        total_scans = len(workflows)
-        
-        # Compter les vulnérabilités depuis la DB
-        vulnerabilities = db.select('vulnerabilities')
-        total_vulns = len(vulnerabilities)
-        
-        # Compter les vulnérabilités critiques
-        critical_vulns = len([v for v in vulnerabilities if v.get('severity', '').upper() == 'CRITICAL'])
-        
-        # Compter les scans récents (24h)
+        org_id = current_user["organization_id"]
+
+        # Total scans
+        total_scans = (
+            db.query(func.count(Scan.id))
+            .filter(Scan.organization_id == org_id)
+            .scalar()
+        ) or 0
+
+        # Scans récents (30 derniers jours)
         now = datetime.utcnow()
-        recent_scans = 0
-        for wf in workflows:
-            completed_at = wf.get('completed_at') or wf.get('started_at')
-            if completed_at:
-                try:
-                    if isinstance(completed_at, str):
-                        dt = datetime.fromisoformat(completed_at.replace('Z', '+00:00'))
-                    else:
-                        dt = completed_at
-                    if (now - dt).total_seconds() <= 24 * 3600:
-                        recent_scans += 1
-                except Exception:
-                    pass
-        
-        # Calculer la moyenne CVSS
-        cvss_scores = [v.get('cvss_score') for v in vulnerabilities if v.get('cvss_score')]
-        average_cvss = round(sum(cvss_scores) / len(cvss_scores), 2) if cvss_scores else 0.0
-        
-        # Compter les scripts
-        scripts = db.select('scripts')
-        total_scripts = len(scripts)
+        cutoff = now - timedelta(days=30)
+        recent_scans = (
+            db.query(func.count(Scan.id))
+            .filter(
+                Scan.organization_id == org_id,
+                Scan.created_at >= cutoff,
+            )
+            .scalar()
+        ) or 0
+
+        # Vulnérabilités
+        total_vulns = (
+            db.query(func.count(Vulnerability.id))
+            .filter(Vulnerability.organization_id == org_id)
+            .scalar()
+        ) or 0
+
+        critical_vulns = (
+            db.query(func.count(Vulnerability.id))
+            .filter(
+                Vulnerability.organization_id == org_id,
+                Vulnerability.severity == "CRITICAL",
+            )
+            .scalar()
+        ) or 0
+
+        # Moyenne CVSS
+        avg_cvss = (
+            db.query(func.avg(Vulnerability.cvss_score))
+            .filter(
+                Vulnerability.organization_id == org_id,
+                Vulnerability.cvss_score.isnot(None),
+            )
+            .scalar()
+        )
+        average_cvss = round(float(avg_cvss), 2) if avg_cvss is not None else 0.0
+
+        # Total scripts
+        total_scripts = (
+            db.query(func.count(RemediationScript.id))
+            .filter(RemediationScript.organization_id == org_id)
+            .scalar()
+        ) or 0
 
         response = {
             "total_scans": total_scans,
@@ -570,22 +596,30 @@ async def get_overview_stats(
 
 @router.get("/stats/severity-distribution", tags=["stats"])
 async def get_severity_distribution(
-    db: Database = Depends(get_database),
+    db: Session = Depends(get_db),
+    current_user: Dict[str, Any] = Depends(get_current_user),
 ):
     """
-    Répartition des vulnérabilités par sévérité pour le dashboard (depuis la DB).
+    Répartition des vulnérabilités par sévérité pour le dashboard (PostgreSQL).
     """
     try:
-        # Compter depuis la table vulnerabilities
-        vulnerabilities = db.select('vulnerabilities')
+        org_id = current_user["organization_id"]
+
         counts = {"CRITICAL": 0, "HIGH": 0, "MEDIUM": 0, "LOW": 0, "UNKNOWN": 0}
-        
-        for vuln in vulnerabilities:
-            severity = str(vuln.get('severity', 'UNKNOWN')).upper()
-            if severity in counts:
-                counts[severity] += 1
+
+        rows = (
+            db.query(Vulnerability.severity, func.count(Vulnerability.id))
+            .filter(Vulnerability.organization_id == org_id)
+            .group_by(Vulnerability.severity)
+            .all()
+        )
+
+        for severity, count in rows:
+            sev = (severity or "UNKNOWN").upper()
+            if sev in counts:
+                counts[sev] += count
             else:
-                counts["UNKNOWN"] += 1
+                counts["UNKNOWN"] += count
         
         labels = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "UNKNOWN"]
         values = [counts[l] for l in labels]
@@ -605,30 +639,32 @@ async def get_severity_distribution(
 
 @router.get("/stats/timeline", tags=["stats"])
 async def get_timeline_stats(
-    db: Database = Depends(get_database),
+    db: Session = Depends(get_db),
+    current_user: Dict[str, Any] = Depends(get_current_user),
 ):
     """
-    Timeline des scans pour le dashboard (depuis la DB).
+    Timeline des scans sur 30 jours (PostgreSQL, multi-tenant).
     On renvoie un format directement compatible avec Chart.js (labels + dataset).
     """
     try:
-        # Récupérer les workflows depuis la DB
-        workflows = db.select('workflows', order_by='started_at ASC')
-        timeline_counts: Dict[str, int] = {}
+        org_id = current_user["organization_id"]
+        now = datetime.utcnow()
+        cutoff = now - timedelta(days=30)
 
-        for wf in workflows:
-            completed_at = wf.get('completed_at') or wf.get('started_at')
-            if not completed_at:
-                continue
-            try:
-                if isinstance(completed_at, str):
-                    dt = datetime.fromisoformat(completed_at.replace('Z', '+00:00'))
-                else:
-                    dt = completed_at
-                day = dt.date().isoformat()
-                timeline_counts[day] = timeline_counts.get(day, 0) + 1
-            except Exception:
-                continue
+        scans = (
+            db.query(Scan)
+            .filter(
+                Scan.organization_id == org_id,
+                Scan.created_at >= cutoff,
+            )
+            .order_by(Scan.created_at.asc())
+            .all()
+        )
+
+        timeline_counts: Dict[str, int] = {}
+        for scan in scans:
+            day = (scan.completed_at or scan.created_at).date().isoformat()
+            timeline_counts[day] = timeline_counts.get(day, 0) + 1
 
         labels = sorted(timeline_counts.keys())
         values = [timeline_counts[d] for d in labels]
@@ -657,29 +693,34 @@ async def get_timeline_stats(
 @router.get("/stats/top-vulnerabilities", tags=["stats"])
 async def get_top_vulnerabilities(
     limit: int = 10,
-    db: Database = Depends(get_database),
+    db: Session = Depends(get_db),
+    current_user: Dict[str, Any] = Depends(get_current_user),
 ):
     """
-    Top vulnérabilités pour le dashboard (depuis la DB).
+    Top vulnérabilités pour le dashboard (PostgreSQL).
     """
     try:
-        # Récupérer les vulnérabilités depuis la DB, triées par CVSS
-        vulnerabilities = db.select(
-            'vulnerabilities',
-            order_by='cvss_score DESC',
-            limit=limit
+        org_id = current_user["organization_id"]
+
+        vulns = (
+            db.query(Vulnerability)
+            .filter(Vulnerability.organization_id == org_id)
+            .order_by(Vulnerability.cvss_score.desc().nullslast())
+            .limit(limit)
+            .all()
         )
-        
-        top = []
-        for vuln in vulnerabilities:
-            top.append({
-                "vulnerability_id": vuln.get('vulnerability_id', ''),
-                "name": vuln.get('name', ''),
-                "severity": vuln.get('severity', 'UNKNOWN'),
-                "cvss_score": vuln.get('cvss_score', 0.0) or 0.0,
-                "description": vuln.get('description', ''),
-            })
-        
+
+        top = [
+            {
+                "vulnerability_id": str(v.id),
+                "name": v.title,
+                "severity": v.severity,
+                "cvss_score": float(v.cvss_score) if v.cvss_score is not None else 0.0,
+                "description": v.description or "",
+            }
+            for v in vulns
+        ]
+
         return {"vulnerabilities": top}
     except Exception as e:
         logger.error(f"Erreur stats top-vulnerabilities: {e}")

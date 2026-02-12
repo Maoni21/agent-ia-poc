@@ -15,11 +15,13 @@ const Layout = ({ children }) => {
 
   const navItems = [
     { path: '/', label: 'Dashboard' },
+    { path: '/assets', label: 'Assets' },
     { path: '/scans', label: 'Scans' },
     { path: '/vulnerabilities', label: 'Vulnérabilités' },
     { path: '/scripts', label: 'Scripts' },
     { path: '/groups', label: 'Groupes' },
     { path: '/analysis-history', label: 'Historique IA' },
+     { path: '/webhooks', label: 'Webhooks' },
   ];
 
   return (

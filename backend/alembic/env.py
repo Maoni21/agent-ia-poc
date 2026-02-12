@@ -14,13 +14,10 @@ ROOT_DIR = BACKEND_DIR.parent.parent
 sys.path.insert(0, str(BACKEND_DIR))
 sys.path.insert(0, str(ROOT_DIR))
 
-# Import des modèles (à adapter selon votre structure)
-# from src.database.models import Base
-# target_metadata = Base.metadata
+# Import des modèles SQLAlchemy
+from src.database.models import Base
 
-# Pour l'instant, on utilise une metadata vide
-from sqlalchemy import MetaData
-target_metadata = MetaData()
+target_metadata = Base.metadata
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
@@ -41,12 +38,6 @@ if database_url.startswith('postgresql://'):
         database_url = database_url.replace('postgresql://', 'postgresql+psycopg2://')
 
 config.set_main_option('sqlalchemy.url', database_url)
-
-# add your model's MetaData object here
-# for 'autogenerate' support
-# from myapp import mymodel
-# target_metadata = mymodel.Base.metadata
-target_metadata = None
 
 # other values from the config, defined by the needs of env.py,
 # can be acquired:

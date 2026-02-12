@@ -95,6 +95,13 @@ alembic>=1.13.1
 sqlalchemy>=2.0.25
 # ORM Python pour PostgreSQL et SQLite
 
+# File d'attente de tâches (scans asynchrones)
+celery>=5.3.0
+redis>=5.0.0
+
+# SSH pour l'agent d'exécution
+paramiko>=3.4.0
+
 # ================================================================================
 # PARSING ET DATA PROCESSING - Traitement des données
 # ================================================================================

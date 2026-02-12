@@ -1,17 +1,13 @@
 import { api } from './api';
 
 export const scriptsService = {
-  // Liste des scripts de remédiation
-  getScripts: async ({ limit = 50, status } = {}) => {
-    const response = await api.get('/api/scripts', {
-      params: {
-        limit,
-        status: status || undefined,
-      },
-    });
+  // Récupère un script de remédiation par ID
+  getScript: async (id) => {
+    const response = await api.get(`/api/v1/remediation-scripts/${id}`);
     return response.data;
   },
 };
 
 export default scriptsService;
+
 

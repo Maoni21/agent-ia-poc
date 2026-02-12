@@ -64,6 +64,28 @@ class ReportFormat(str, Enum):
     CSV = "csv"
 
 
+class AssetType(str, Enum):
+    SERVER = "server"
+    WORKSTATION = "workstation"
+    NETWORK_DEVICE = "network_device"
+    CONTAINER = "container"
+    CLOUD_INSTANCE = "cloud_instance"
+
+
+class EnvironmentType(str, Enum):
+    PRODUCTION = "production"
+    STAGING = "staging"
+    DEVELOPMENT = "development"
+    TEST = "test"
+
+
+class BusinessCriticality(str, Enum):
+    CRITICAL = "critical"
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOW = "low"
+
+
 # === MODÈLES DE BASE ===
 
 class BaseResponse(BaseModel):
@@ -197,6 +219,66 @@ class ScanResultModel(BaseModel):
                 "vulnerabilities": []
             }
         }
+
+
+# === MODÈLES D'ASSET ===
+
+
+class AssetBase(BaseModel):
+    hostname: Optional[str] = Field(None, description="Nom d'hôte de la machine")
+    ip_address: str = Field(..., description="Adresse IP de l'asset (IPv4/IPv6)")
+    mac_address: Optional[str] = Field(None, description="Adresse MAC")
+    asset_type: AssetType = Field(
+        AssetType.SERVER, description="Type d'asset"
+    )
+    os: Optional[str] = Field(None, description="Système d'exploitation")
+    os_version: Optional[str] = Field(None, description="Version de l'OS")
+    environment: Optional[EnvironmentType] = Field(
+        None, description="Environnement (prod, staging, ...)"
+    )
+    business_criticality: BusinessCriticality = Field(
+        BusinessCriticality.MEDIUM, description="Criticité métier"
+    )
+    datacenter: Optional[str] = Field(None, description="Datacenter")
+    cloud_provider: Optional[str] = Field(None, description="Fournisseur cloud")
+    region: Optional[str] = Field(None, description="Région")
+    tags: Optional[List[str]] = Field(
+        default_factory=list,
+        description="Tags (production, web-server, critical, ...)",
+    )
+    notes: Optional[str] = Field(None, description="Notes libres")
+
+
+class AssetCreate(AssetBase):
+    pass
+
+
+class AssetUpdate(BaseModel):
+    hostname: Optional[str] = None
+    ip_address: Optional[str] = None
+    mac_address: Optional[str] = None
+    asset_type: Optional[AssetType] = None
+    os: Optional[str] = None
+    os_version: Optional[str] = None
+    environment: Optional[EnvironmentType] = None
+    business_criticality: Optional[BusinessCriticality] = None
+    datacenter: Optional[str] = None
+    cloud_provider: Optional[str] = None
+    region: Optional[str] = None
+    tags: Optional[List[str]] = None
+    notes: Optional[str] = None
+    is_active: Optional[bool] = None
+    monitoring_enabled: Optional[bool] = None
+
+
+class AssetResponse(AssetBase):
+    id: str
+    created_at: datetime
+    updated_at: datetime
+    last_seen: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
 
 
 # === MODÈLES DE VULNÉRABILITÉ ===

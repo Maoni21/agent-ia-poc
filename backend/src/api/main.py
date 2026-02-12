@@ -36,12 +36,17 @@ from .config import (
     MIDDLEWARE_CONFIG,
     APIErrorCodes,
     ERROR_MESSAGES,
-    API_TAGS
+    API_TAGS,
 )
 from . import dependencies
 from .dependencies import get_database, get_supervisor, get_current_user
 from .routes import router
+from .routes.assets import router as assets_router
+from .routes.scans import router as scans_router, ws_router as scans_ws_router
+from .routes.vulnerabilities import router as vulns_router
+from .routes.integrations import router as integrations_router
 from .scan_v2 import router as scan_v2_router, ws_router as scan_v2_ws_router
+from .auth import router as auth_router
 
 # Configuration du logging
 logger = setup_logger(__name__)
@@ -158,12 +163,20 @@ def create_app() -> FastAPI:
 
     # Ajouter les routes API v1
     app.include_router(router)
+    app.include_router(assets_router)
+    app.include_router(scans_router)
+    app.include_router(vulns_router)
+    app.include_router(integrations_router)
+
+    # Authentification (JWT)
+    app.include_router(auth_router)
 
     # Ajouter les routes API v2 (dashboard historique)
     app.include_router(scan_v2_router)
 
-    # Ajouter le WebSocket v2 pour la progression des scans
-    app.include_router(scan_v2_ws_router)
+    # Ajouter les WebSockets pour la progression des scans
+    app.include_router(scan_v2_ws_router)  # historique
+    app.include_router(scans_ws_router)    # nouveau basé BDD/Celery
 
     # Configuration OpenAPI personnalisée
     setup_openapi(app)
