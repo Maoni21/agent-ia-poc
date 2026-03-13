@@ -1,5 +1,6 @@
 import Head from 'next/head';
 import { useEffect, useState } from 'react';
+import { useRouter } from 'next/router';
 import {
   Container,
   Typography,
@@ -23,6 +24,7 @@ import Layout from '../components/Layout';
 import groupsService from '../lib/services/groupsService';
 
 export default function GroupsPage() {
+  const router = useRouter();
   const [groups, setGroups] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -138,7 +140,12 @@ export default function GroupsPage() {
                 </TableHead>
                 <TableBody>
                   {groups.map((group) => (
-                    <TableRow key={group.group_id}>
+                  <TableRow
+                      key={group.group_id}
+                      hover
+                      sx={{ cursor: 'pointer' }}
+                      onClick={() => router.push(`/groups/${group.group_id}`)}
+                    >
                       <TableCell>{group.name}</TableCell>
                       <TableCell>{group.description}</TableCell>
                       <TableCell>{group.vulnerability_count}</TableCell>
@@ -146,6 +153,10 @@ export default function GroupsPage() {
                       <TableCell>
                         <Button
                           size="small"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleAnalyzeGroup(group.group_id);
+                          }}
                           onClick={() => handleAnalyzeGroup(group.group_id)}
                           sx={{ mr: 1 }}
                         >
@@ -154,7 +165,10 @@ export default function GroupsPage() {
                         <Button
                           size="small"
                           color="error"
-                          onClick={() => handleDeleteGroup(group.group_id)}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDeleteGroup(group.group_id);
+                          }}
                         >
                           Supprimer
                         </Button>

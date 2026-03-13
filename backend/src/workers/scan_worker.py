@@ -115,6 +115,12 @@ def _create_vulnerability_from_info(db: Session, scan: Scan, info: Vulnerability
     """
     Transforme un VulnerabilityInfo (Collector) en enregistrement Vulnerability SQLAlchemy.
     """
+    # Normaliser la confiance en lowercase pour respecter la contrainte
+    # SQL "check_confidence" qui n'accepte que 'high', 'medium', 'low'.
+    confidence_value = (info.confidence or "medium").lower()
+    if confidence_value not in {"high", "medium", "low"}:
+        confidence_value = "medium"
+
     v = Vulnerability(
         id=uuid.uuid4(),
         scan_id=scan.id,
@@ -128,7 +134,7 @@ def _create_vulnerability_from_info(db: Session, scan: Scan, info: Vulnerability
         port=info.affected_port,
         protocol="tcp",
         detection_method=info.detection_method,
-        confidence=info.confidence or "medium",
+        confidence=confidence_value,
         references=[{"type": "reference", "url": r} for r in (info.references or [])],
     )
     db.add(v)

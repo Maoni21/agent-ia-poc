@@ -33,6 +33,9 @@ from src.core.analyzer import (
 from src.core import AnalyzerException, CoreErrorCodes
 from config import get_config
 
+# Utiliser le plugin anyio pour tous les tests async de ce module
+pytestmark = pytest.mark.anyio
+
 # Import des utilitaires de test
 from . import (
     TestData,

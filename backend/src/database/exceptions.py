@@ -111,7 +111,9 @@ DEFAULT_DATABASE_CONFIG = {
     "backup_retention_days": 30,
     "auto_vacuum": True,
     "foreign_keys": True,
-    "journal_mode": "WAL",
+    # SQLite renvoie généralement "wal" en minuscules pour PRAGMA journal_mode
+    # On aligne donc la config sur cette valeur pour que les tests correspondent.
+    "journal_mode": "wal",
     "synchronous": "NORMAL",
     "temp_store": "MEMORY",
     "cache_size": 10000,

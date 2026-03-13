@@ -9,6 +9,8 @@ import {
   Chip,
   CircularProgress,
   Alert,
+  Checkbox,
+  Button,
 } from '@mui/material';
 import {
   LineChart,
@@ -25,6 +27,8 @@ import {
 } from 'recharts';
 import Layout from '../../components/Layout';
 import scansService from '../../lib/services/scansService';
+import vulnerabilitiesService from '../../lib/services/vulnerabilitiesService';
+import groupsService from '../../lib/services/groupsService';
 
 const WS_BASE =
   typeof window !== 'undefined'
@@ -39,6 +43,8 @@ export default function ScanDetailsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [progress, setProgress] = useState(null);
+  const [selectedVulnIds, setSelectedVulnIds] = useState([]);
+  const [actionLoading, setActionLoading] = useState(false);
 
   useEffect(() => {
     if (!id) return;
@@ -49,6 +55,7 @@ export default function ScanDetailsPage() {
       try {
         const data = await scansService.getScan(id);
         setScan(data);
+        setSelectedVulnIds([]);
       } catch (err) {
         setError(err.message || 'Erreur lors du chargement du scan');
       } finally {
@@ -120,6 +127,23 @@ export default function ScanDetailsPage() {
     return entries.filter((e) => e.value > 0);
   }, [scan]);
 
+  const getVulnSeverityColors = (severity) => {
+    const sev = (severity || '').toUpperCase();
+    switch (sev) {
+      case 'CRITICAL':
+        return { border: '#DC2626', bg: '#FEF2F2' };
+      case 'HIGH':
+        return { border: '#EA580C', bg: '#FFF7ED' };
+      case 'MEDIUM':
+        return { border: '#D97706', bg: '#FFFBEB' };
+      case 'LOW':
+        return { border: '#16A34A', bg: '#ECFDF3' };
+      case 'INFO':
+      default:
+        return { border: '#6B7280', bg: '#F3F4F6' };
+    }
+  };
+
   const formatDate = (value) => {
     if (!value) return '-';
     try {
@@ -127,6 +151,108 @@ export default function ScanDetailsPage() {
       return d.toLocaleString('fr-FR');
     } catch {
       return value;
+    }
+  };
+
+  const toggleVulnSelection = (vulnId, checked) => {
+    setSelectedVulnIds((prev) => {
+      if (checked) {
+        if (prev.includes(vulnId)) return prev;
+        return [...prev, vulnId];
+      }
+      return prev.filter((id) => id !== vulnId);
+    });
+  };
+
+  const handleSelectAll = () => {
+    if (!scan?.vulnerabilities || scan.vulnerabilities.length === 0) return;
+    setSelectedVulnIds(scan.vulnerabilities.map((v) => v.id));
+  };
+
+  const handleClearSelection = () => {
+    setSelectedVulnIds([]);
+  };
+
+  const handleAnalyzeSelected = async () => {
+    if (selectedVulnIds.length === 0) return;
+    setActionLoading(true);
+    try {
+      const promises = selectedVulnIds.map((vulnId) =>
+        vulnerabilitiesService.analyzeVulnerability(vulnId),
+      );
+      await Promise.all(promises);
+      // Recharger le scan pour rafraîchir les indicateurs IA
+      try {
+        const refreshed = await scansService.getScan(id);
+        setScan(refreshed);
+      } catch {
+        // silencieux si le refresh échoue
+      }
+      alert(
+        `Analyse IA terminée pour ${selectedVulnIds.length} vulnérabilité(s).`,
+      );
+    } catch (err) {
+      alert(
+        "Erreur lors de l'analyse IA: " + (err.message || 'inconnue'),
+      );
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleCorrectSelected = async () => {
+    if (selectedVulnIds.length === 0) return;
+    setActionLoading(true);
+    try {
+      const promises = selectedVulnIds.map((vulnId) =>
+        vulnerabilitiesService.generateScript(vulnId, {
+          target_system: 'ubuntu-22.04',
+          script_type: 'bash',
+        }),
+      );
+      const results = await Promise.all(promises);
+      alert(
+        `Scripts de remédiation générés pour ${results.length} vulnérabilité(s).`,
+      );
+      // eslint-disable-next-line no-console
+      console.log('Scripts générés pour la sélection:', results);
+    } catch (err) {
+      alert(
+        'Erreur lors de la génération de scripts: ' +
+          (err.message || 'inconnue'),
+      );
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleCreateGroupFromSelection = async () => {
+    if (selectedVulnIds.length === 0) return;
+
+    const name = window.prompt(
+      'Nom du groupe de vulnérabilités :',
+      `Scan ${id} - ${selectedVulnIds.length} vulnérabilités`,
+    );
+    if (!name) return;
+
+    const description =
+      window.prompt('Description du groupe (optionnel) :', '') || '';
+
+    try {
+      setActionLoading(true);
+      await groupsService.createGroup({
+        name,
+        description,
+        vulnerabilityIds: selectedVulnIds,
+      });
+      alert('Groupe de vulnérabilités créé avec succès.');
+    } catch (err) {
+      alert(
+        'Erreur lors de la création du groupe: ' +
+          (err.message || 'inconnue'),
+      );
+    } finally {
+      setActionLoading(false);
     }
   };
 
@@ -222,8 +348,8 @@ export default function ScanDetailsPage() {
                 </Typography>
               </Paper>
 
-              <Box sx={{ display: 'flex', flexDirection: { xs: 'column', md: 'row' }, gap: 3, mb: 3 }}>
-                <Paper sx={{ p: 2, flex: 1 }}>
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3, mb: 3 }}>
+                <Paper sx={{ p: 2 }}>
                   <Typography variant="h6" gutterBottom>
                     Distribution par sévérité
                   </Typography>
@@ -252,28 +378,145 @@ export default function ScanDetailsPage() {
                   )}
                 </Paper>
 
-                <Paper sx={{ p: 2, flex: 1 }}>
+                <Paper sx={{ p: 2, minHeight: 260 }}>
                   <Typography variant="h6" gutterBottom>
                     Vulnérabilités
                   </Typography>
-                  {(!scan.vulnerabilities || scan.vulnerabilities.length === 0) ? (
+                {(!scan.vulnerabilities || scan.vulnerabilities.length === 0) ? (
                     <Typography variant="body2" color="text.secondary">
                       Aucune vulnérabilité associée à ce scan.
                     </Typography>
                   ) : (
-                    <Box sx={{ maxHeight: 260, overflowY: 'auto' }}>
-                      {scan.vulnerabilities.map((vuln) => (
-                        <Box key={vuln.id} sx={{ mb: 1.5 }}>
-                          <Typography variant="subtitle2">
-                            {vuln.title || vuln.cve_id}
-                          </Typography>
-                          <Typography variant="caption" color="text.secondary">
-                            {vuln.severity} — CVSS:{' '}
-                            {vuln.cvss_score != null ? vuln.cvss_score : '-'}
-                          </Typography>
-                        </Box>
-                      ))}
+                  <>
+                    <Box
+                      sx={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        mb: 1.5,
+                        flexWrap: 'wrap',
+                        gap: 1,
+                      }}
+                    >
+                      <Typography variant="body2" color="text.secondary">
+                        Sélection : {selectedVulnIds.length} /{' '}
+                        {scan.vulnerabilities.length}
+                      </Typography>
+                      <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+                        <Button
+                          size="small"
+                          variant="text"
+                          onClick={handleSelectAll}
+                          disabled={actionLoading}
+                        >
+                          Tout sélectionner
+                        </Button>
+                        <Button
+                          size="small"
+                          variant="text"
+                          onClick={handleClearSelection}
+                          disabled={actionLoading || selectedVulnIds.length === 0}
+                        >
+                          Vider
+                        </Button>
+                        <Button
+                          size="small"
+                          variant="contained"
+                          onClick={handleAnalyzeSelected}
+                          disabled={
+                            actionLoading || selectedVulnIds.length === 0
+                          }
+                        >
+                          Analyser IA
+                        </Button>
+                        <Button
+                          size="small"
+                          variant="contained"
+                          color="success"
+                          onClick={handleCorrectSelected}
+                          disabled={
+                            actionLoading || selectedVulnIds.length === 0
+                          }
+                        >
+                          Scripts de remédiation
+                        </Button>
+                        <Button
+                          size="small"
+                          variant="outlined"
+                          onClick={handleCreateGroupFromSelection}
+                          disabled={
+                            actionLoading || selectedVulnIds.length === 0
+                          }
+                        >
+                          Créer un groupe
+                        </Button>
+                      </Box>
                     </Box>
+
+                    <Box sx={{ maxHeight: 420, overflowY: 'auto' }}>
+                      {scan.vulnerabilities.map((vuln) => {
+                        const colors = getVulnSeverityColors(vuln.severity);
+                        return (
+                          <Box
+                            key={vuln.id}
+                            sx={{
+                              mb: 1.5,
+                              display: 'flex',
+                              alignItems: 'flex-start',
+                              gap: 1,
+                            }}
+                          >
+                            <Checkbox
+                              size="small"
+                              checked={selectedVulnIds.includes(vuln.id)}
+                              onChange={(e) =>
+                                toggleVulnSelection(vuln.id, e.target.checked)
+                              }
+                            />
+                            <Box
+                              sx={{
+                                flex: 1,
+                                borderRadius: 1,
+                                borderLeft: '4px solid',
+                                borderLeftColor: colors.border,
+                                backgroundColor: colors.bg,
+                                px: 1.5,
+                                py: 0.75,
+                              }}
+                            >
+                              <Box
+                                sx={{
+                                  display: 'flex',
+                                  justifyContent: 'space-between',
+                                  alignItems: 'center',
+                                  mb: 0.25,
+                                }}
+                              >
+                                <Typography variant="subtitle2">
+                                  {vuln.title || vuln.cve_id}
+                                </Typography>
+                                {vuln.ai_priority_score != null && (
+                                  <Typography
+                                    variant="caption"
+                                    sx={{ fontWeight: 600 }}
+                                  >
+                                    IA&nbsp;score: {vuln.ai_priority_score}/10
+                                  </Typography>
+                                )}
+                              </Box>
+                              <Typography variant="caption" color="text.secondary">
+                                {vuln.severity} — CVSS:{' '}
+                                {vuln.cvss_score != null ? vuln.cvss_score : '-'}
+                                {vuln.ai_analyzed && vuln.ai_priority_score == null && (
+                                  <> • Analysée par IA</>
+                                )}
+                              </Typography>
+                            </Box>
+                          </Box>
+                        );
+                      })}
+                    </Box>
+                  </>
                   )}
                 </Paper>
               </Box>

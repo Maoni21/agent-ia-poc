@@ -67,11 +67,12 @@ test: test-backend test-frontend ## Lancer tous les tests
 
 test-backend: ## Lancer les tests backend
 	@echo "$(BLUE)🧪 Tests backend...$(NC)"
-	cd backend && \
-	if [ -d ".venv" ]; then \
-		.venv/bin/pytest -v tests/; \
+	@if [ -d ".venv" ]; then \
+		.venv/bin/python -m pytest backend/tests/ -v; \
+	elif [ -d "backend/.venv" ]; then \
+		cd backend && .venv/bin/pytest -v tests/; \
 	else \
-		pytest -v tests/; \
+		cd backend && pytest -v tests/; \
 	fi
 
 test-frontend: ## Lancer les tests frontend

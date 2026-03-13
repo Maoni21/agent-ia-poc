@@ -816,6 +816,17 @@ class CryptoUtils:
             hashlib.sha256
         ).hexdigest()
 
+
+def get_password_hash(password: str) -> str:
+    """
+    Helper utilisé par `src.database.init_db.create_default_admin`.
+
+    Retourne un hash stockable au format "<hash>:<salt>" compatible
+    avec la logique de connexion dans `src.api.auth`.
+    """
+    hash_hex, salt_hex = CryptoUtils.hash_password(password)
+    return f"{hash_hex}:{salt_hex}"
+
     @staticmethod
     def verify_hmac(message: str, secret_key: str, expected_hmac: str) -> bool:
         """

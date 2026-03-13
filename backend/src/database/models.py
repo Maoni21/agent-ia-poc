@@ -142,7 +142,10 @@ class User(Base):
     # Relationships
     organization: Mapped[Organization] = relationship(back_populates="users")
     audit_logs: Mapped[List["AuditLog"]] = relationship(back_populates="user")
-    api_keys: Mapped[List["APIKey"]] = relationship(back_populates="user")
+    api_keys: Mapped[List["APIKey"]] = relationship(
+        back_populates="user",
+        foreign_keys="APIKey.user_id",
+    )
     notifications: Mapped[List["Notification"]] = relationship(back_populates="user")
 
     __table_args__ = (
@@ -561,7 +564,8 @@ class AuditLog(Base):
 
     ip_address: Mapped[Optional[str]] = mapped_column(INET)
     user_agent: Mapped[Optional[str]] = mapped_column(Text)
-    metadata: Mapped[dict] = mapped_column(JSON, default=dict)
+    # Renommer l'attribut Python pour éviter le nom réservé SQLAlchemy "metadata"
+    metadata_json: Mapped[dict] = mapped_column("metadata", JSON, default=dict)
 
     status: Mapped[Optional[str]] = mapped_column(String(20))
     error_message: Mapped[Optional[str]] = mapped_column(Text)
@@ -619,7 +623,10 @@ class APIKey(Base):
 
     # Relationships
     organization: Mapped[Organization] = relationship(back_populates="api_keys")
-    user: Mapped[Optional[User]] = relationship(back_populates="api_keys")
+    user: Mapped[Optional[User]] = relationship(
+        back_populates="api_keys",
+        foreign_keys=[user_id],
+    )
 
     __table_args__ = (
         Index("idx_apikey_org", "organization_id"),
@@ -652,7 +659,8 @@ class Notification(Base):
     read_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
 
     sent_via: Mapped[List[str]] = mapped_column(ARRAY(String), default=list)
-    metadata: Mapped[dict] = mapped_column(JSON, default=dict)
+    # Utiliser un nom d'attribut différent pour éviter le conflit avec Base.metadata
+    metadata_json: Mapped[dict] = mapped_column("metadata", JSON, default=dict)
 
     # Relationships
     organization: Mapped[Optional[Organization]] = relationship(

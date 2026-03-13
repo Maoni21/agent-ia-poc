@@ -20,7 +20,6 @@ import { Search, Download } from '@mui/icons-material';
 import Layout from '../components/Layout';
 import VulnerabilityCard from '../components/VulnerabilityCard';
 import vulnerabilitiesService from '../lib/services/vulnerabilitiesService';
-import analysisService from '../lib/services/analysisService';
 
 export default function VulnerabilitiesPage() {
   const [vulnerabilities, setVulnerabilities] = useState([]);
@@ -88,18 +87,18 @@ export default function VulnerabilitiesPage() {
 
   const handleAnalyzeAll = async () => {
     if (filteredVulnerabilities.length === 0) return;
-    const ids = filteredVulnerabilities
-      .map((v) => v.vulnerability_id)
-      .filter(Boolean);
     try {
-      const result = await analysisService.analyzeSelected({
-        vulnerabilityIds: ids,
-        targetSystem: 'Unknown System',
-      });
+      const ids = filteredVulnerabilities
+        .map((v) => v.id || v.vulnerability_id)
+        .filter(Boolean);
+      if (ids.length === 0) return;
+
+      // Analyse IA vulnérabilité par vulnérabilité via l'endpoint v1 existant
+      await Promise.all(
+        ids.map((id) => vulnerabilitiesService.analyzeVulnerability(id)),
+      );
       alert(
-        `Analyse lancée / terminée.\nAnalysis ID: ${result.analysis_id || 'n/a'}\n${
-          result.message || ''
-        }`,
+        `Analyse IA terminée pour ${ids.length} vulnérabilité(s) (voir les fiches détail pour le résultat).`,
       );
     } catch (err) {
       alert('Erreur lors de l’analyse: ' + (err.message || 'inconnue'));
@@ -108,16 +107,25 @@ export default function VulnerabilitiesPage() {
 
   const handleCorrectAll = async () => {
     if (filteredVulnerabilities.length === 0) return;
-    const ids = filteredVulnerabilities
-      .map((v) => v.vulnerability_id)
-      .filter(Boolean);
     try {
-      const result = await analysisService.correctSelected({
-        vulnerabilityIds: ids,
-        targetSystem: 'ubuntu',
-      });
-      alert(result.message || 'Génération de scripts terminée (voir console).');
-      console.log('Scripts générés:', result);
+      const ids = filteredVulnerabilities
+        .map((v) => v.id || v.vulnerability_id)
+        .filter(Boolean);
+      if (ids.length === 0) return;
+
+      const results = await Promise.all(
+        ids.map((id) =>
+          vulnerabilitiesService.generateScript(id, {
+            target_system: 'ubuntu-22.04',
+            script_type: 'bash',
+          }),
+        ),
+      );
+      alert(
+        `Scripts de remédiation générés pour ${results.length} vulnérabilité(s).`,
+      );
+      // eslint-disable-next-line no-console
+      console.log('Scripts générés (sélection filtrée):', results);
     } catch (err) {
       alert('Erreur lors de la génération de scripts: ' + (err.message || 'inconnue'));
     }

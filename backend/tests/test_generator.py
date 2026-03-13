@@ -19,6 +19,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from typing import Optional, Dict, Any, List
 
 import sys
 
@@ -1779,7 +1780,7 @@ class ScanResultExporter:
                 <div class="vulnerability {severity}">
                     <h3>{name}</h3>
                     <p><strong>ID:</strong> {vuln_id}</p>
-                    <p><strong>Gravité:</strong> {severity.upper()}</p>
+                    <p><strong>Gravité:</strong> <span class="{severity}">{severity.upper()}</span></p>
                     {f"<p><strong>Score CVSS:</strong> {cvss_score}</p>" if cvss_score else ""}
                     <p><strong>Service affecté:</strong> {service} (port {port})</p>
                     <p><strong>Description:</strong> {description}</p>

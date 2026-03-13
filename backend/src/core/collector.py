@@ -30,6 +30,20 @@ import re
 import nmap
 import requests
 
+import sys
+from pathlib import Path
+
+# Rendre disponibles les imports "from config ..." même lorsque
+# le module est chargé par un worker Celery (qui ne passe pas
+# par src.api.main et ne modifie pas sys.path).
+BACKEND_DIR = Path(__file__).resolve().parents[2]
+if str(BACKEND_DIR) not in sys.path:
+    sys.path.insert(0, str(BACKEND_DIR))
+
+ROOT_DIR = BACKEND_DIR.parent
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
 from config import get_config, get_nmap_config, VULNERABILITY_DB_PATH
 from src.utils.logger import setup_logger
 from src.utils.validators import validate_ip_address, validate_domain

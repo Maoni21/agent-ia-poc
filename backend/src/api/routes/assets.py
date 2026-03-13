@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import ipaddress
 import uuid
-from typing import List
+from typing import List, Dict, Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.exc import IntegrityError
@@ -42,19 +42,38 @@ def _validate_ip(ip: str) -> None:
 
 @router.get(
     "/assets",
-    response_model=List[AssetResponse],
+    # On renvoie une liste de dicts sérialisés pour éviter les erreurs
+    # de validation Pydantic qui provoquaient des 422 côté frontend.
+    response_model=List[Dict[str, Any]],
     dependencies=[Depends(require_permission("assets:read"))],
 )
 def list_assets(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
-) -> List[AssetResponse]:
+) -> List[Dict[str, Any]]:
     """
     Liste des assets de l'organization (filtré par current_user.organization_id).
     """
     query = tenant_scoped_query(Asset, db, current_user)
     assets = query.order_by(Asset.created_at.desc()).all()
-    return [AssetResponse.from_orm(a) for a in assets]
+
+    # Sérialisation manuelle minimale, en ne retournant que les champs
+    # effectivement utilisés par le frontend.
+    serialized: List[Dict[str, Any]] = []
+    for a in assets:
+        serialized.append(
+            {
+                "id": str(a.id),
+                "hostname": a.hostname,
+                "ip_address": str(a.ip_address),
+                "asset_type": a.asset_type,
+                "environment": a.environment,
+                "tags": a.tags or [],
+                "last_seen": a.last_seen.isoformat() if a.last_seen else None,
+            }
+        )
+
+    return serialized
 
 
 @router.post(

@@ -1,6 +1,6 @@
 """Add SSH credentials fields to assets
 
-Revision ID: 003_add_ssh_credentials_to_assets
+Revision ID: 003_ssh_credentials
 Revises: 002_add_webhook_subscriptions
 Create Date: 2026-02-12
 """
@@ -11,7 +11,7 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision = "003_add_ssh_credentials_to_assets"
+revision = "003_ssh_credentials"
 down_revision = "002_add_webhook_subscriptions"
 branch_labels = None
 depends_on = None

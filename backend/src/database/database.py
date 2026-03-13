@@ -371,10 +371,11 @@ class Database:
             affected_service TEXT,
             affected_port INTEGER,
             cve_ids TEXT, -- JSON array
-            "references" TEXT, -- JSON array (nom réservé en SQL, donc entre guillemets)
+            references_json TEXT, -- JSON array des références externes
             detection_method TEXT,
             confidence TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
 
         -- Table des analyses IA
@@ -804,7 +805,7 @@ class Database:
                         'affected_service': vuln.affected_service,
                         'affected_port': vuln.affected_port,
                         'cve_ids': json.dumps(vuln.cve_ids),
-                        'references': json.dumps(vuln.references),
+                        'references_json': json.dumps(vuln.references),
                         'detection_method': vuln.detection_method,
                         'confidence': vuln.confidence
                     }
@@ -1010,7 +1011,7 @@ class Database:
             Returns:
                 str: Chemin du fichier de sauvegarde
             """
-            from . import backup_database
+            from .backup_restore import backup_database
 
             try:
                 backup_file = backup_database(
@@ -1039,13 +1040,13 @@ class Database:
             Returns:
                 bool: True si la restauration a réussi
             """
-            from . import restore_database
+            from .backup_restore import restore_database
 
             try:
                 # Fermer toutes les connexions
                 self.close_all_connections()
 
-                # Restaurer
+                # Restaurer le fichier de base de données
                 success = restore_database(
                     backup_path,
                     self.database_path,
@@ -1055,8 +1056,17 @@ class Database:
                 if success:
                     # Réinitialiser les connexions
                     self._connections.clear()
-                    self.is_initialized = False
                     logger.info("Base de données restaurée avec succès")
+
+                    # S'assurer que le schéma minimal existe (idempotent)
+                    try:
+                        self.create_tables()
+                    except Exception as e:
+                        # Ne pas masquer une restauration réussie,
+                        # mais journaliser le problème de schéma.
+                        logger.warning(
+                            f"Erreur lors de la recréation du schéma après restauration: {e}"
+                        )
 
                 return success
 
@@ -1131,7 +1141,7 @@ class Database:
                     try:
                         count = self.count(table)
                         table_stats[table] = count
-                    except:
+                    except Exception:
                         table_stats[table] = 0
 
                 # Informations sur le fichier
@@ -1140,11 +1150,14 @@ class Database:
 
                 # Statistiques de performance
                 conn = self.get_connection()
+
                 cursor = conn.execute("PRAGMA page_count")
-                page_count = cursor.fetchone()[0] if cursor.fetchone() else 0
+                row = cursor.fetchone()
+                page_count = row[0] if row else 0
 
                 cursor = conn.execute("PRAGMA page_size")
-                page_size = cursor.fetchone()[0] if cursor.fetchone() else 0
+                row = cursor.fetchone()
+                page_size = row[0] if row else 0
 
                 cursor.close()
 

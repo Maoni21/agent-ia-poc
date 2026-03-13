@@ -2,26 +2,43 @@
 Package database - Gestion de la persistance
 """
 
-# === EXCEPTIONS ===
-
-class DatabaseError(Exception):
-    """Exception de base pour les erreurs de base de données"""
-    pass
-
-
-class ConnectionError(DatabaseError):
-    """Erreur de connexion à la base de données"""
-    pass
-
+# === EXCEPTIONS (réexport depuis exceptions pour compatibilité) ===
+from .exceptions import (
+    DatabaseError,
+    ConnectionError,
+    MigrationError,
+    ValidationError,
+    IntegrityError,
+    DatabaseErrorCodes,
+    ERROR_MESSAGES,
+    DEFAULT_DATABASE_CONFIG,
+    DATABASE_SCHEMA_VERSION,
+)
 
 # === IMPORTS ===
+from .database import Database, DatabaseConnection, create_database_manager
+from .backup_restore import backup_database, restore_database, get_database_stats
 
-from .database import Database
+# Alias pour les tests
+create_database = create_database_manager
 
 __version__ = "1.0.0"
 
 __all__ = [
     "Database",
+    "DatabaseConnection",
     "DatabaseError",
     "ConnectionError",
+    "MigrationError",
+    "ValidationError",
+    "IntegrityError",
+    "DatabaseErrorCodes",
+    "ERROR_MESSAGES",
+    "DEFAULT_DATABASE_CONFIG",
+    "DATABASE_SCHEMA_VERSION",
+    "create_database",
+    "create_database_manager",
+    "backup_database",
+    "restore_database",
+    "get_database_stats",
 ]

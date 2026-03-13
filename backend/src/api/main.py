@@ -40,12 +40,8 @@ from .config import (
 )
 from . import dependencies
 from .dependencies import get_database, get_supervisor, get_current_user
-from .routes import router
-from .routes.assets import router as assets_router
-from .routes.scans import router as scans_router, ws_router as scans_ws_router
-from .routes.vulnerabilities import router as vulns_router
-from .routes.integrations import router as integrations_router
-from .routes.dashboard import router as dashboard_router
+from .api_v1 import router as api_v1_router
+from .routes.scans import ws_router as scans_ws_router
 from .scan_v2 import router as scan_v2_router, ws_router as scan_v2_ws_router
 from .auth import router as auth_router
 
@@ -162,21 +158,16 @@ def create_app() -> FastAPI:
     # Ajouter les gestionnaires d'erreur
     setup_error_handlers(app)
 
-    # Ajouter les routes API v1
-    app.include_router(router)
-    app.include_router(assets_router)
-    app.include_router(scans_router)
-    app.include_router(vulns_router)
-    app.include_router(integrations_router)
-    app.include_router(dashboard_router)
+    # Routes API v1 (PostgreSQL + Celery + stats dashboard)
+    app.include_router(api_v1_router)
 
     # Authentification (JWT)
     app.include_router(auth_router)
 
-    # Ajouter les routes API v2 (dashboard historique)
+    # Routes API v2 (scan historique)
     app.include_router(scan_v2_router)
 
-    # Ajouter les WebSockets pour la progression des scans
+    # WebSockets pour la progression des scans
     app.include_router(scan_v2_ws_router)  # historique
     app.include_router(scans_ws_router)    # nouveau basé BDD/Celery
 

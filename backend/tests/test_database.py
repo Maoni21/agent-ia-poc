@@ -26,9 +26,19 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
 from src.database.database import Database, DatabaseConnection
 from src.database import (
-    DatabaseError, ConnectionError, MigrationError, ValidationError,
-    IntegrityError, DatabaseErrorCodes, DEFAULT_DATABASE_CONFIG,
-    create_database, backup_database, restore_database, get_database_stats
+    DatabaseError,
+    ConnectionError,
+    MigrationError,
+    ValidationError,
+    IntegrityError,
+    DatabaseErrorCodes,
+    DEFAULT_DATABASE_CONFIG,
+    create_database,
+    backup_database,
+    restore_database,
+    get_database_stats,
+    ERROR_MESSAGES,
+    DATABASE_SCHEMA_VERSION,
 )
 
 

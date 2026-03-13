@@ -220,6 +220,8 @@ def get_scan(
                 "port": v.port,
                 "service": v.service,
                 "status": v.status,
+                "ai_analyzed": v.ai_analyzed,
+                "ai_priority_score": v.ai_priority_score,
             }
             for v in vulns
         ],
