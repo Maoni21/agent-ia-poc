@@ -24,8 +24,13 @@ from src.database.database import Database
 from src.database.init_db import get_db
 from src.database.models import User
 from src.utils.logger import setup_logger
+from dotenv import load_dotenv
 
 logger = setup_logger(__name__)
+
+# Même logique que config.settings : garantir backend/.env même si l'import ne passe pas par config en premier
+load_dotenv(BACKEND_DIR.parent / ".env")
+load_dotenv(BACKEND_DIR / ".env", override=True)
 
 security = HTTPBearer(auto_error=False)
 
@@ -56,19 +61,36 @@ def get_supervisor() -> Supervisor:
 
 # === CONFIG JWT ===
 
-JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY") or os.getenv("SECRET_KEY")
 JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
+
+_DEV_JWT_FALLBACK = (
+    "dev-insecure-jwt-key-change-in-production-min-32-characters-long"
+)
+
+
+def get_jwt_secret_key() -> str:
+    """Clé de signature JWT ; en dev uniquement si ALLOW_JWT_DEV_SECRET=1."""
+    key = os.getenv("JWT_SECRET_KEY") or os.getenv("SECRET_KEY")
+    if key:
+        return key
+    if os.getenv("ALLOW_JWT_DEV_SECRET", "").lower() in ("1", "true", "yes"):
+        logger.warning(
+            "JWT: ALLOW_JWT_DEV_SECRET activé — définir JWT_SECRET_KEY en production."
+        )
+        return _DEV_JWT_FALLBACK
+    return ""
 
 
 def decode_token(token: str) -> Dict[str, Any]:
     """Décode et valide un JWT, retourne le payload."""
-    if not JWT_SECRET_KEY:
+    secret = get_jwt_secret_key()
+    if not secret:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Clé JWT non configurée côté serveur.",
         )
     try:
-        payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
+        payload = jwt.decode(token, secret, algorithms=[JWT_ALGORITHM])
         return payload
     except JWTError:
         raise HTTPException(

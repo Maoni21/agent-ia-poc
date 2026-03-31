@@ -23,7 +23,7 @@ from src.database.init_db import get_db
 from src.database.models import Organization, User
 from src.utils.logger import setup_logger
 from src.utils.security import CryptoUtils
-from .dependencies import get_current_user
+from .dependencies import get_current_user, get_jwt_secret_key
 
 logger = setup_logger(__name__)
 
@@ -32,12 +32,8 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 # === CONFIG JWT ===
 
-JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY") or os.getenv("SECRET_KEY")
 JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "60"))
-
-if not JWT_SECRET_KEY:
-    logger.warning("JWT_SECRET_KEY n'est pas défini dans l'environnement.")
 
 
 class Token(BaseModel):
@@ -67,8 +63,15 @@ class RegisterRequest(BaseModel):
 
 def create_access_token(user: User) -> str:
     """Crée un JWT conforme au cahier des charges."""
-    if not JWT_SECRET_KEY:
-        raise RuntimeError("JWT_SECRET_KEY non configuré.")
+    secret = get_jwt_secret_key()
+    if not secret:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "Clé JWT non configurée. Ajoutez JWT_SECRET_KEY ou SECRET_KEY dans backend/.env, "
+                "ou ALLOW_JWT_DEV_SECRET=true pour le développement local uniquement."
+            ),
+        )
 
     expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     to_encode = {
@@ -77,7 +80,7 @@ def create_access_token(user: User) -> str:
         "role": user.role,
         "exp": expire,
     }
-    return jwt.encode(to_encode, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
+    return jwt.encode(to_encode, secret, algorithm=JWT_ALGORITHM)
 
 
 def slugify(name: str) -> str:

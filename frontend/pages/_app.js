@@ -1,44 +1,28 @@
-import { ThemeProvider, CssBaseline } from '@mui/material';
-import { createTheme } from '@mui/material/styles';
-import { CacheProvider } from '@emotion/react';
-import createEmotionCache from '../lib/createEmotionCache';
 import '../styles/globals.css';
+import { ThemeProvider } from '../components/theme-provider';
 import ProtectedRoute from '../components/ProtectedRoute';
+import AppLayout from '../components/layout/AppLayout';
 
-const clientSideEmotionCache = createEmotionCache();
-
-const theme = createTheme({
-  palette: {
-    primary: {
-      main: '#1976d2',
-    },
-    secondary: {
-      main: '#dc004e',
-    },
-  },
-});
-
-// Routes publiques (sans auth)
+// Routes publiques (sans auth ni layout)
 const publicRoutes = ['/login', '/register'];
 
-function MyApp({ Component, pageProps, emotionCache = clientSideEmotionCache, router }) {
+function MyApp({ Component, pageProps, router }) {
   const isPublic = publicRoutes.includes(router?.pathname);
 
   const content = isPublic ? (
     <Component {...pageProps} />
   ) : (
     <ProtectedRoute>
-      <Component {...pageProps} />
+      <AppLayout>
+        <Component {...pageProps} />
+      </AppLayout>
     </ProtectedRoute>
   );
 
   return (
-    <CacheProvider value={emotionCache}>
-      <ThemeProvider theme={theme}>
-        <CssBaseline />
-        {content}
-      </ThemeProvider>
-    </CacheProvider>
+    <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
+      {content}
+    </ThemeProvider>
   );
 }
 

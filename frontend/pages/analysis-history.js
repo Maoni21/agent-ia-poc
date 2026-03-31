@@ -1,25 +1,42 @@
 import Head from 'next/head';
 import { useEffect, useState } from 'react';
+import { BrainCircuit, Loader2, AlertCircle, X } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Separator } from '@/components/ui/separator';
 import {
-  Container,
-  Typography,
-  Box,
-  Paper,
-  Table,
-  TableHead,
-  TableRow,
-  TableCell,
-  TableBody,
-  CircularProgress,
-  Alert,
   Dialog,
-  DialogTitle,
   DialogContent,
-  DialogActions,
-  Button,
-} from '@mui/material';
-import Layout from '../components/Layout';
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
 import analysisHistoryService from '../lib/services/analysisHistoryService';
+
+const formatDate = (value) => {
+  if (!value) return '—';
+  try { return new Date(value).toLocaleString('fr-FR'); }
+  catch { return value; }
+};
+
+const formatScore = (score) => {
+  if (score === null || score === undefined) return '—';
+  const n = parseFloat(score);
+  if (isNaN(n)) return score;
+  return `${(n * 100).toFixed(0)}%`;
+};
 
 export default function AnalysisHistoryPage() {
   const [analyses, setAnalyses] = useState([]);
@@ -42,9 +59,7 @@ export default function AnalysisHistoryPage() {
     }
   };
 
-  useEffect(() => {
-    loadAnalyses();
-  }, []);
+  useEffect(() => { loadAnalyses(); }, []);
 
   const openDetails = async (analysis) => {
     setSelected(analysis);
@@ -60,128 +75,184 @@ export default function AnalysisHistoryPage() {
     }
   };
 
+  const closeDetails = () => {
+    setSelected(null);
+    setDetails(null);
+  };
+
   return (
     <>
       <Head>
-        <title>CyberSec AI - Historique des analyses IA</title>
+        <title>Historique IA - CyberSec AI</title>
       </Head>
-      <Layout>
-        <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
-          <Typography variant="h4" gutterBottom>
-            Historique des analyses IA
-          </Typography>
 
-          {error && (
-            <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>
-              {error}
-            </Alert>
-          )}
+      <div className="space-y-6">
+        {/* Header */}
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">Historique des analyses IA</h1>
+          <p className="text-muted-foreground">
+            {loading ? '...' : `${analyses.length} analyse(s) enregistrée(s)`}
+          </p>
+        </div>
 
-          <Paper sx={{ p: 2 }}>
+        {error && (
+          <Alert variant="destructive">
+            <AlertCircle className="h-4 w-4" />
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        )}
+
+        <Card>
+          <CardContent className="p-0">
             {loading ? (
-              <Box display="flex" justifyContent="center" p={3}>
-                <CircularProgress />
-              </Box>
+              <div className="space-y-3 p-4">
+                {Array.from({ length: 5 }).map((_, i) => (
+                  <Skeleton key={i} className="h-12 w-full" />
+                ))}
+              </div>
             ) : analyses.length === 0 ? (
-              <Alert severity="info">Aucune analyse IA enregistrée pour le moment.</Alert>
+              <div className="flex flex-col items-center gap-3 py-16 text-muted-foreground">
+                <BrainCircuit className="h-12 w-12" />
+                <p className="font-medium text-lg">Aucune analyse IA enregistrée</p>
+                <p className="text-sm text-center max-w-sm">
+                  Les analyses IA apparaissent ici après avoir lancé une analyse sur une vulnérabilité ou un groupe.
+                </p>
+              </div>
             ) : (
-              <Table size="small">
-                <TableHead>
+              <Table>
+                <TableHeader>
                   <TableRow>
-                    <TableCell>Analysis ID</TableCell>
-                    <TableCell>Target</TableCell>
-                    <TableCell>Vulnérabilités</TableCell>
-                    <TableCell>Modèle IA</TableCell>
-                    <TableCell>Score de confiance</TableCell>
-                    <TableCell>Date</TableCell>
+                    <TableHead>Analysis ID</TableHead>
+                    <TableHead>Cible</TableHead>
+                    <TableHead>Vulnérabilités</TableHead>
+                    <TableHead>Modèle IA</TableHead>
+                    <TableHead>Score de confiance</TableHead>
+                    <TableHead>Date</TableHead>
                   </TableRow>
-                </TableHead>
+                </TableHeader>
                 <TableBody>
                   {analyses.map((analysis) => (
                     <TableRow
                       key={analysis.analysis_id}
-                      hover
-                      sx={{ cursor: 'pointer' }}
+                      className="cursor-pointer hover:bg-accent/50"
                       onClick={() => openDetails(analysis)}
                     >
-                      <TableCell>{analysis.analysis_id}</TableCell>
-                      <TableCell>{analysis.target_system}</TableCell>
-                      <TableCell>{analysis.vulnerability_count}</TableCell>
-                      <TableCell>{analysis.ai_model_used}</TableCell>
-                      <TableCell>{analysis.confidence_score}</TableCell>
-                      <TableCell>{analysis.analyzed_at}</TableCell>
+                      <TableCell>
+                        <code className="text-xs font-mono bg-muted px-1.5 py-0.5 rounded">
+                          {analysis.analysis_id}
+                        </code>
+                      </TableCell>
+                      <TableCell className="text-sm">{analysis.target_system || '—'}</TableCell>
+                      <TableCell>
+                        <Badge variant="secondary">
+                          {analysis.vulnerability_count ?? 0}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant="outline" className="font-mono text-xs">
+                          {analysis.ai_model_used || '—'}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
+                        {analysis.confidence_score !== null && analysis.confidence_score !== undefined ? (
+                          <span className="font-medium text-sm">
+                            {formatScore(analysis.confidence_score)}
+                          </span>
+                        ) : '—'}
+                      </TableCell>
+                      <TableCell className="text-sm text-muted-foreground">
+                        {formatDate(analysis.analyzed_at)}
+                      </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
               </Table>
             )}
-          </Paper>
+          </CardContent>
+        </Card>
 
-          <Dialog
-            open={Boolean(selected)}
-            onClose={() => {
-              setSelected(null);
-              setDetails(null);
-            }}
-            fullWidth
-            maxWidth="md"
-          >
-            <DialogTitle>Détails de l'analyse</DialogTitle>
-            <DialogContent dividers>
-              {loadingDetails ? (
-                <Box display="flex" justifyContent="center" p={3}>
-                  <CircularProgress />
-                </Box>
-              ) : !details ? (
-                <Typography variant="body2" color="text.secondary">
-                  Sélectionnez une analyse pour afficher les détails.
-                </Typography>
-              ) : (
-                <Box>
-                  <Typography variant="subtitle1" gutterBottom>
-                    Cible: {details.target_system}
-                  </Typography>
-                  <Typography variant="body2" gutterBottom>
-                    Vulnérabilités analysées: {details.vulnerability_ids?.length || 0}
-                  </Typography>
-                  <Typography variant="body2" gutterBottom>
-                    Score de confiance: {details.confidence_score}
-                  </Typography>
+        {/* Analysis Detail Dialog */}
+        <Dialog open={Boolean(selected)} onOpenChange={(open) => { if (!open) closeDetails(); }}>
+          <DialogContent className="sm:max-w-2xl max-h-[80vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <BrainCircuit className="h-5 w-5" />
+                Détails de l&apos;analyse IA
+              </DialogTitle>
+              {selected && (
+                <DialogDescription>
+                  <code className="text-xs font-mono">{selected.analysis_id}</code>
+                </DialogDescription>
+              )}
+            </DialogHeader>
 
-                  {details.analysis_summary && (
-                    <Box mt={2}>
-                      <Typography variant="subtitle2">Résumé de l'analyse</Typography>
-                      <pre style={{ whiteSpace: 'pre-wrap' }}>
+            {loadingDetails ? (
+              <div className="flex flex-col items-center gap-3 py-8">
+                <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                <p className="text-sm text-muted-foreground">Chargement des détails...</p>
+              </div>
+            ) : details ? (
+              <div className="space-y-4">
+                {/* Meta info */}
+                <div className="grid grid-cols-2 gap-3 text-sm">
+                  <div className="space-y-0.5">
+                    <p className="text-muted-foreground">Cible</p>
+                    <p className="font-medium">{details.target_system || '—'}</p>
+                  </div>
+                  <div className="space-y-0.5">
+                    <p className="text-muted-foreground">Score de confiance</p>
+                    <p className="font-medium">{formatScore(details.confidence_score)}</p>
+                  </div>
+                  <div className="space-y-0.5">
+                    <p className="text-muted-foreground">Vulnérabilités analysées</p>
+                    <p className="font-medium">{details.vulnerability_ids?.length ?? 0}</p>
+                  </div>
+                  <div className="space-y-0.5">
+                    <p className="text-muted-foreground">Modèle IA</p>
+                    <Badge variant="outline" className="font-mono text-xs w-fit">
+                      {details.ai_model_used || '—'}
+                    </Badge>
+                  </div>
+                </div>
+
+                {details.analysis_summary && (
+                  <>
+                    <Separator />
+                    <div className="space-y-2">
+                      <p className="text-sm font-semibold">Résumé de l&apos;analyse</p>
+                      <pre className="bg-muted p-3 rounded-md text-xs overflow-auto max-h-48 whitespace-pre-wrap">
                         {JSON.stringify(details.analysis_summary, null, 2)}
                       </pre>
-                    </Box>
-                  )}
+                    </div>
+                  </>
+                )}
 
-                  {details.remediation_plan && (
-                    <Box mt={2}>
-                      <Typography variant="subtitle2">Plan de remédiation</Typography>
-                      <pre style={{ whiteSpace: 'pre-wrap' }}>
+                {details.remediation_plan && (
+                  <>
+                    <Separator />
+                    <div className="space-y-2">
+                      <p className="text-sm font-semibold">Plan de remédiation</p>
+                      <pre className="bg-muted p-3 rounded-md text-xs overflow-auto max-h-48 whitespace-pre-wrap">
                         {JSON.stringify(details.remediation_plan, null, 2)}
                       </pre>
-                    </Box>
-                  )}
-                </Box>
-              )}
-            </DialogContent>
-            <DialogActions>
-              <Button
-                onClick={() => {
-                  setSelected(null);
-                  setDetails(null);
-                }}
-              >
+                    </div>
+                  </>
+                )}
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground py-4 text-center">
+                Aucun détail disponible.
+              </p>
+            )}
+
+            <DialogFooter>
+              <Button variant="outline" onClick={closeDetails}>
                 Fermer
               </Button>
-            </DialogActions>
-          </Dialog>
-        </Container>
-      </Layout>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      </div>
     </>
   );
 }
-

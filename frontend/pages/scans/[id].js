@@ -1,39 +1,38 @@
 import Head from 'next/head';
 import { useRouter } from 'next/router';
 import { useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 import {
-  Box,
-  Container,
-  Typography,
-  Paper,
-  Chip,
-  CircularProgress,
-  Alert,
-  Checkbox,
-  Button,
-} from '@mui/material';
+  ArrowLeft, RefreshCw, Shield, AlertTriangle,
+  Network, Bug, Sparkles, Wrench, Users,
+} from 'lucide-react';
 import {
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  Tooltip,
-  CartesianGrid,
-  ResponsiveContainer,
-  PieChart,
-  Pie,
-  Cell,
-  Legend,
+  PieChart, Pie, Cell, Legend, Tooltip, ResponsiveContainer,
 } from 'recharts';
-import Layout from '../../components/Layout';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Progress } from '@/components/ui/progress';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Separator } from '@/components/ui/separator';
+import { StatusBadge } from '@/components/ui/status-badge';
+import { SeverityBadge } from '@/components/ui/severity-badge';
 import scansService from '../../lib/services/scansService';
 import vulnerabilitiesService from '../../lib/services/vulnerabilitiesService';
 import groupsService from '../../lib/services/groupsService';
 
 const WS_BASE =
   typeof window !== 'undefined'
-    ? (process.env.NEXT_PUBLIC_WS_URL || process.env.REACT_APP_WS_URL || 'ws://localhost:8000')
+    ? (process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8000')
     : '';
+
+const formatDate = (value) => {
+  if (!value) return '—';
+  try { return new Date(value).toLocaleString('fr-FR'); }
+  catch { return value; }
+};
 
 export default function ScanDetailsPage() {
   const router = useRouter();
@@ -48,7 +47,6 @@ export default function ScanDetailsPage() {
 
   useEffect(() => {
     if (!id) return;
-
     const load = async () => {
       setLoading(true);
       setError(null);
@@ -62,23 +60,15 @@ export default function ScanDetailsPage() {
         setLoading(false);
       }
     };
-
     load();
   }, [id]);
 
   useEffect(() => {
     if (!id) return;
-
-    // WebSocket temps réel basé sur /ws/scans/{id}
-    const url = `${WS_BASE}/ws/scans/${id}`;
     let ws;
-
     try {
-      ws = new WebSocket(url);
-    } catch (e) {
-      console.warn('WebSocket non disponible:', e);
-      return;
-    }
+      ws = new WebSocket(`${WS_BASE}/ws/scans/${id}`);
+    } catch (e) { return; }
 
     ws.onmessage = (event) => {
       try {
@@ -90,167 +80,74 @@ export default function ScanDetailsPage() {
           currentStep: data.current_step || '',
           message: data.message || '',
         });
-
         if (['completed', 'failed', 'cancelled'].includes((data.status || '').toLowerCase())) {
-          // Recharger les détails à la fin
-          scansService
-            .getScan(id)
-            .then(setScan)
-            .catch(() => {});
+          scansService.getScan(id).then(setScan).catch(() => {});
         }
-      } catch (e) {
-        console.warn('Message WebSocket invalide:', e);
-      }
+      } catch {}
     };
-
-    ws.onerror = () => {
-      // On se contente de logguer
-      console.warn('Erreur WebSocket pour le scan', id);
-    };
-
-    return () => {
-      if (ws) {
-        ws.close(1000, 'Page fermée');
-      }
-    };
+    return () => { if (ws) ws.close(1000, 'Page fermée'); };
   }, [id]);
 
   const severityChartData = useMemo(() => {
     if (!scan) return [];
-    const entries = [
+    return [
       { label: 'CRITICAL', value: scan.critical_count || 0, color: '#DC2626' },
       { label: 'HIGH', value: scan.high_count || 0, color: '#F97316' },
       { label: 'MEDIUM', value: scan.medium_count || 0, color: '#FACC15' },
       { label: 'LOW', value: scan.low_count || 0, color: '#22C55E' },
       { label: 'INFO', value: scan.info_count || 0, color: '#9CA3AF' },
-    ];
-    return entries.filter((e) => e.value > 0);
+    ].filter((e) => e.value > 0);
   }, [scan]);
 
-  const getVulnSeverityColors = (severity) => {
-    const sev = (severity || '').toUpperCase();
-    switch (sev) {
-      case 'CRITICAL':
-        return { border: '#DC2626', bg: '#FEF2F2' };
-      case 'HIGH':
-        return { border: '#EA580C', bg: '#FFF7ED' };
-      case 'MEDIUM':
-        return { border: '#D97706', bg: '#FFFBEB' };
-      case 'LOW':
-        return { border: '#16A34A', bg: '#ECFDF3' };
-      case 'INFO':
-      default:
-        return { border: '#6B7280', bg: '#F3F4F6' };
-    }
-  };
-
-  const formatDate = (value) => {
-    if (!value) return '-';
-    try {
-      const d = new Date(value);
-      return d.toLocaleString('fr-FR');
-    } catch {
-      return value;
-    }
-  };
-
   const toggleVulnSelection = (vulnId, checked) => {
-    setSelectedVulnIds((prev) => {
-      if (checked) {
-        if (prev.includes(vulnId)) return prev;
-        return [...prev, vulnId];
-      }
-      return prev.filter((id) => id !== vulnId);
-    });
-  };
-
-  const handleSelectAll = () => {
-    if (!scan?.vulnerabilities || scan.vulnerabilities.length === 0) return;
-    setSelectedVulnIds(scan.vulnerabilities.map((v) => v.id));
-  };
-
-  const handleClearSelection = () => {
-    setSelectedVulnIds([]);
+    setSelectedVulnIds((prev) =>
+      checked ? [...prev.filter((x) => x !== vulnId), vulnId] : prev.filter((x) => x !== vulnId)
+    );
   };
 
   const handleAnalyzeSelected = async () => {
-    if (selectedVulnIds.length === 0) return;
+    if (!selectedVulnIds.length) return;
     setActionLoading(true);
     try {
-      const promises = selectedVulnIds.map((vulnId) =>
-        vulnerabilitiesService.analyzeVulnerability(vulnId),
-      );
-      await Promise.all(promises);
-      // Recharger le scan pour rafraîchir les indicateurs IA
-      try {
-        const refreshed = await scansService.getScan(id);
-        setScan(refreshed);
-      } catch {
-        // silencieux si le refresh échoue
-      }
-      alert(
-        `Analyse IA terminée pour ${selectedVulnIds.length} vulnérabilité(s).`,
-      );
+      await Promise.all(selectedVulnIds.map((vid) => vulnerabilitiesService.analyzeVulnerability(vid)));
+      const refreshed = await scansService.getScan(id);
+      setScan(refreshed);
+      alert(`Analyse IA terminée pour ${selectedVulnIds.length} vulnérabilité(s).`);
     } catch (err) {
-      alert(
-        "Erreur lors de l'analyse IA: " + (err.message || 'inconnue'),
-      );
+      alert("Erreur lors de l'analyse IA: " + (err.message || 'inconnue'));
     } finally {
       setActionLoading(false);
     }
   };
 
   const handleCorrectSelected = async () => {
-    if (selectedVulnIds.length === 0) return;
+    if (!selectedVulnIds.length) return;
     setActionLoading(true);
     try {
-      const promises = selectedVulnIds.map((vulnId) =>
-        vulnerabilitiesService.generateScript(vulnId, {
-          target_system: 'ubuntu-22.04',
-          script_type: 'bash',
-        }),
+      const results = await Promise.all(
+        selectedVulnIds.map((vid) =>
+          vulnerabilitiesService.generateScript(vid, { target_system: 'ubuntu-22.04', script_type: 'bash' })
+        )
       );
-      const results = await Promise.all(promises);
-      alert(
-        `Scripts de remédiation générés pour ${results.length} vulnérabilité(s).`,
-      );
-      // eslint-disable-next-line no-console
-      console.log('Scripts générés pour la sélection:', results);
+      alert(`Scripts générés pour ${results.length} vulnérabilité(s).`);
     } catch (err) {
-      alert(
-        'Erreur lors de la génération de scripts: ' +
-          (err.message || 'inconnue'),
-      );
+      alert('Erreur génération scripts: ' + (err.message || 'inconnue'));
     } finally {
       setActionLoading(false);
     }
   };
 
-  const handleCreateGroupFromSelection = async () => {
-    if (selectedVulnIds.length === 0) return;
-
-    const name = window.prompt(
-      'Nom du groupe de vulnérabilités :',
-      `Scan ${id} - ${selectedVulnIds.length} vulnérabilités`,
-    );
+  const handleCreateGroup = async () => {
+    if (!selectedVulnIds.length) return;
+    const name = window.prompt('Nom du groupe :', `Scan ${id} - ${selectedVulnIds.length} vulnérabilités`);
     if (!name) return;
-
-    const description =
-      window.prompt('Description du groupe (optionnel) :', '') || '';
-
+    const description = window.prompt('Description (optionnel) :', '') || '';
+    setActionLoading(true);
     try {
-      setActionLoading(true);
-      await groupsService.createGroup({
-        name,
-        description,
-        vulnerabilityIds: selectedVulnIds,
-      });
-      alert('Groupe de vulnérabilités créé avec succès.');
+      await groupsService.createGroup({ name, description, vulnerabilityIds: selectedVulnIds });
+      alert('Groupe créé avec succès.');
     } catch (err) {
-      alert(
-        'Erreur lors de la création du groupe: ' +
-          (err.message || 'inconnue'),
-      );
+      alert('Erreur: ' + (err.message || 'inconnue'));
     } finally {
       setActionLoading(false);
     }
@@ -261,270 +158,219 @@ export default function ScanDetailsPage() {
       <Head>
         <title>Détails du scan - CyberSec AI</title>
       </Head>
-      <Layout>
-        <Container maxWidth="lg">
-          <Box sx={{ mt: 4, mb: 3 }}>
-            <Typography variant="h4" gutterBottom>
-              Détails du scan
-            </Typography>
-          </Box>
 
-          {error && (
-            <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>
-              {error}
-            </Alert>
-          )}
+      <div className="space-y-6">
+        {/* Header */}
+        <div className="flex items-center gap-3">
+          <Button variant="ghost" size="icon" onClick={() => router.push('/scans')}>
+            <ArrowLeft className="h-4 w-4" />
+          </Button>
+          <div className="flex-1">
+            <h1 className="text-2xl font-bold">
+              Scan{id ? ` #${id.slice(0, 8)}` : ''}
+            </h1>
+            {scan && (
+              <p className="text-sm text-muted-foreground">
+                Type : {scan.scan_type} · Commencé le {formatDate(scan.started_at || scan.created_at)}
+              </p>
+            )}
+          </div>
+          {scan && <StatusBadge status={scan.status} />}
+        </div>
 
-          {loading ? (
-            <Box display="flex" justifyContent="center" p={3}>
-              <CircularProgress />
-            </Box>
-          ) : !scan ? (
-            <Alert severity="info">Scan introuvable.</Alert>
-          ) : (
-            <>
-              {progress && (
-                <Paper sx={{ p: 2, mb: 2 }}>
-                  <Box
-                    display="flex"
-                    justifyContent="space-between"
-                    alignItems="center"
-                    mb={1}
-                  >
-                    <Typography variant="subtitle1" fontWeight="bold">
+        {error && (
+          <Alert variant="destructive">
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        )}
+
+        {loading ? (
+          <div className="space-y-4">
+            <Skeleton className="h-24 w-full" />
+            <Skeleton className="h-48 w-full" />
+          </div>
+        ) : !scan ? (
+          <Alert><AlertDescription>Scan introuvable.</AlertDescription></Alert>
+        ) : (
+          <>
+            {/* Progress bar (WebSocket) */}
+            {progress && scan.status === 'running' && (
+              <Card>
+                <CardContent className="pt-6 space-y-3">
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground font-medium">
                       {progress.currentStep || 'Progression du scan'}
-                    </Typography>
-                    <Typography variant="body2" color="text.secondary">
-                      {progress.progress ?? 0}%
-                    </Typography>
-                  </Box>
-                  <Box
-                    sx={{
-                      height: 8,
-                      borderRadius: 4,
-                      backgroundColor: 'action.hover',
-                      overflow: 'hidden',
-                      mb: 1,
-                    }}
-                  >
-                    <Box
-                      sx={{
-                        width: `${progress.progress ?? 0}%`,
-                        height: '100%',
-                        backgroundColor: 'primary.main',
-                        transition: 'width 0.3s ease',
-                      }}
-                    />
-                  </Box>
-                  <Typography variant="body2" color="text.secondary">
+                    </span>
+                    <span className="font-bold">{progress.progress ?? 0}%</span>
+                  </div>
+                  <Progress value={progress.progress ?? 0} className="h-2" />
+                  <p className="text-sm text-muted-foreground">
                     {progress.message || 'Traitement en cours...'}
-                  </Typography>
-                </Paper>
-              )}
+                  </p>
+                </CardContent>
+              </Card>
+            )}
 
-              <Paper sx={{ p: 2, mb: 3 }}>
-                <Typography variant="h6" gutterBottom>
-                  Informations générales
-                </Typography>
-                <Typography variant="body2">
-                  <strong>ID :</strong> {scan.id}
-                </Typography>
-                <Typography variant="body2">
-                  <strong>Type :</strong> {scan.scan_type}
-                </Typography>
-                <Typography variant="body2" sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                  <strong>Statut :</strong>
-                  <Chip label={scan.status} size="small" />
-                </Typography>
-                <Typography variant="body2">
-                  <strong>Début :</strong> {formatDate(scan.started_at || scan.created_at)}
-                </Typography>
-                <Typography variant="body2">
-                  <strong>Fin :</strong> {formatDate(scan.completed_at)}
-                </Typography>
-                <Typography variant="body2">
-                  <strong>Vulnérabilités trouvées :</strong>{' '}
-                  {scan.vulnerabilities_found ?? 0}
-                </Typography>
-              </Paper>
+            {/* Stats */}
+            <div className="grid gap-4 md:grid-cols-4">
+              {[
+                { label: 'Vulnérabilités', value: scan.vulnerabilities_found ?? 0, icon: Bug, cls: 'text-red-500' },
+                { label: 'Critiques', value: scan.critical_count ?? 0, icon: AlertTriangle, cls: 'text-red-600' },
+                { label: 'Ports scannés', value: scan.ports_scanned ?? '—', icon: Network, cls: 'text-blue-500' },
+                { label: 'Services', value: scan.services_found ?? '—', icon: Shield, cls: 'text-purple-500' },
+              ].map((s) => {
+                const Icon = s.icon;
+                return (
+                  <Card key={s.label}>
+                    <CardHeader className="flex flex-row items-center justify-between pb-2 space-y-0">
+                      <CardTitle className="text-sm font-medium text-muted-foreground">{s.label}</CardTitle>
+                      <Icon className={`h-4 w-4 ${s.cls}`} />
+                    </CardHeader>
+                    <CardContent>
+                      <div className="text-2xl font-bold">{s.value}</div>
+                    </CardContent>
+                  </Card>
+                );
+              })}
+            </div>
 
-              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3, mb: 3 }}>
-                <Paper sx={{ p: 2 }}>
-                  <Typography variant="h6" gutterBottom>
-                    Distribution par sévérité
-                  </Typography>
+            {/* Charts + Info */}
+            <div className="grid gap-4 md:grid-cols-2">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">Distribution par sévérité</CardTitle>
+                </CardHeader>
+                <CardContent>
                   {severityChartData.length === 0 ? (
-                    <Typography variant="body2" color="text.secondary">
-                      Aucune vulnérabilité détectée pour ce scan.
-                    </Typography>
+                    <p className="text-sm text-muted-foreground py-8 text-center">Aucune vulnérabilité détectée</p>
                   ) : (
-                    <ResponsiveContainer width="100%" height={260}>
+                    <ResponsiveContainer width="100%" height={220}>
                       <PieChart>
-                        <Pie
-                          data={severityChartData}
-                          dataKey="value"
-                          nameKey="label"
-                          outerRadius={90}
-                          label
-                        >
-                          {severityChartData.map((entry, index) => (
-                            <Cell key={index} fill={entry.color} />
-                          ))}
+                        <Pie data={severityChartData} dataKey="value" nameKey="label" outerRadius={80} label>
+                          {severityChartData.map((e, i) => <Cell key={i} fill={e.color} />)}
                         </Pie>
-                        <Tooltip />
+                        <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--card))', border: '1px solid hsl(var(--border))' }} />
                         <Legend />
                       </PieChart>
                     </ResponsiveContainer>
                   )}
-                </Paper>
+                </CardContent>
+              </Card>
 
-                <Paper sx={{ p: 2, minHeight: 260 }}>
-                  <Typography variant="h6" gutterBottom>
-                    Vulnérabilités
-                  </Typography>
-                {(!scan.vulnerabilities || scan.vulnerabilities.length === 0) ? (
-                    <Typography variant="body2" color="text.secondary">
-                      Aucune vulnérabilité associée à ce scan.
-                    </Typography>
-                  ) : (
-                  <>
-                    <Box
-                      sx={{
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'center',
-                        mb: 1.5,
-                        flexWrap: 'wrap',
-                        gap: 1,
-                      }}
-                    >
-                      <Typography variant="body2" color="text.secondary">
-                        Sélection : {selectedVulnIds.length} /{' '}
-                        {scan.vulnerabilities.length}
-                      </Typography>
-                      <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-                        <Button
-                          size="small"
-                          variant="text"
-                          onClick={handleSelectAll}
-                          disabled={actionLoading}
-                        >
-                          Tout sélectionner
-                        </Button>
-                        <Button
-                          size="small"
-                          variant="text"
-                          onClick={handleClearSelection}
-                          disabled={actionLoading || selectedVulnIds.length === 0}
-                        >
-                          Vider
-                        </Button>
-                        <Button
-                          size="small"
-                          variant="contained"
-                          onClick={handleAnalyzeSelected}
-                          disabled={
-                            actionLoading || selectedVulnIds.length === 0
-                          }
-                        >
-                          Analyser IA
-                        </Button>
-                        <Button
-                          size="small"
-                          variant="contained"
-                          color="success"
-                          onClick={handleCorrectSelected}
-                          disabled={
-                            actionLoading || selectedVulnIds.length === 0
-                          }
-                        >
-                          Scripts de remédiation
-                        </Button>
-                        <Button
-                          size="small"
-                          variant="outlined"
-                          onClick={handleCreateGroupFromSelection}
-                          disabled={
-                            actionLoading || selectedVulnIds.length === 0
-                          }
-                        >
-                          Créer un groupe
-                        </Button>
-                      </Box>
-                    </Box>
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">Informations générales</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3 text-sm">
+                  {[
+                    ['ID', <span key="id" className="font-mono text-xs">{scan.id}</span>],
+                    ['Type', scan.scan_type],
+                    ['Statut', <StatusBadge key="s" status={scan.status} />],
+                    ['Début', formatDate(scan.started_at || scan.created_at)],
+                    ['Fin', formatDate(scan.completed_at)],
+                    ['Vulnérabilités', scan.vulnerabilities_found ?? 0],
+                  ].map(([label, val]) => (
+                    <div key={label} className="flex justify-between items-center">
+                      <span className="text-muted-foreground">{label}</span>
+                      <span className="font-medium">{val}</span>
+                    </div>
+                  ))}
+                </CardContent>
+              </Card>
+            </div>
 
-                    <Box sx={{ maxHeight: 420, overflowY: 'auto' }}>
-                      {scan.vulnerabilities.map((vuln) => {
-                        const colors = getVulnSeverityColors(vuln.severity);
-                        return (
-                          <Box
-                            key={vuln.id}
-                            sx={{
-                              mb: 1.5,
-                              display: 'flex',
-                              alignItems: 'flex-start',
-                              gap: 1,
-                            }}
-                          >
-                            <Checkbox
-                              size="small"
-                              checked={selectedVulnIds.includes(vuln.id)}
-                              onChange={(e) =>
-                                toggleVulnSelection(vuln.id, e.target.checked)
-                              }
-                            />
-                            <Box
-                              sx={{
-                                flex: 1,
-                                borderRadius: 1,
-                                borderLeft: '4px solid',
-                                borderLeftColor: colors.border,
-                                backgroundColor: colors.bg,
-                                px: 1.5,
-                                py: 0.75,
-                              }}
-                            >
-                              <Box
-                                sx={{
-                                  display: 'flex',
-                                  justifyContent: 'space-between',
-                                  alignItems: 'center',
-                                  mb: 0.25,
-                                }}
-                              >
-                                <Typography variant="subtitle2">
-                                  {vuln.title || vuln.cve_id}
-                                </Typography>
-                                {vuln.ai_priority_score != null && (
-                                  <Typography
-                                    variant="caption"
-                                    sx={{ fontWeight: 600 }}
-                                  >
-                                    IA&nbsp;score: {vuln.ai_priority_score}/10
-                                  </Typography>
-                                )}
-                              </Box>
-                              <Typography variant="caption" color="text.secondary">
-                                {vuln.severity} — CVSS:{' '}
-                                {vuln.cvss_score != null ? vuln.cvss_score : '-'}
-                                {vuln.ai_analyzed && vuln.ai_priority_score == null && (
-                                  <> • Analysée par IA</>
-                                )}
-                              </Typography>
-                            </Box>
-                          </Box>
-                        );
-                      })}
-                    </Box>
-                  </>
+            {/* Vulnerabilities list */}
+            <Card>
+              <CardHeader>
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <CardTitle className="text-base">
+                    Vulnérabilités ({scan.vulnerabilities?.length ?? 0})
+                  </CardTitle>
+                  {scan.vulnerabilities?.length > 0 && (
+                    <div className="flex flex-wrap gap-2">
+                      <Button variant="ghost" size="sm" onClick={() => setSelectedVulnIds(scan.vulnerabilities.map((v) => v.id))}>
+                        Tout sélectionner
+                      </Button>
+                      <Button variant="ghost" size="sm" onClick={() => setSelectedVulnIds([])} disabled={!selectedVulnIds.length}>
+                        Vider
+                      </Button>
+                      <Separator orientation="vertical" className="h-6" />
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={handleAnalyzeSelected}
+                        disabled={actionLoading || !selectedVulnIds.length}
+                      >
+                        <Sparkles className="mr-2 h-4 w-4" />
+                        Analyser IA ({selectedVulnIds.length})
+                      </Button>
+                      <Button
+                        size="sm"
+                        onClick={handleCorrectSelected}
+                        disabled={actionLoading || !selectedVulnIds.length}
+                      >
+                        <Wrench className="mr-2 h-4 w-4" />
+                        Scripts fix
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={handleCreateGroup}
+                        disabled={actionLoading || !selectedVulnIds.length}
+                      >
+                        <Users className="mr-2 h-4 w-4" />
+                        Créer groupe
+                      </Button>
+                    </div>
                   )}
-                </Paper>
-              </Box>
-            </>
-          )}
-        </Container>
-      </Layout>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-3 max-h-[500px] overflow-y-auto">
+                {!scan.vulnerabilities?.length ? (
+                  <p className="text-sm text-muted-foreground text-center py-8">
+                    Aucune vulnérabilité associée à ce scan.
+                  </p>
+                ) : (
+                  scan.vulnerabilities.map((vuln) => (
+                    <div
+                      key={vuln.id}
+                      className="flex items-start gap-3 p-3 rounded-lg border hover:bg-accent/50 transition-colors cursor-pointer"
+                      onClick={() => router.push(`/vulnerabilities/${vuln.id}`)}
+                    >
+                      <Checkbox
+                        checked={selectedVulnIds.includes(vuln.id)}
+                        onCheckedChange={(checked) => toggleVulnSelection(vuln.id, checked)}
+                        onClick={(e) => e.stopPropagation()}
+                      />
+                      <div className="flex-1 space-y-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <SeverityBadge severity={vuln.severity} />
+                          {vuln.cve_id && (
+                            <Badge variant="outline" className="font-mono text-xs">{vuln.cve_id}</Badge>
+                          )}
+                          {vuln.ai_priority_score != null && (
+                            <Badge variant="secondary" className="text-xs">
+                              IA: {vuln.ai_priority_score}/10
+                            </Badge>
+                          )}
+                        </div>
+                        <p className="font-semibold text-sm truncate">
+                          {vuln.title || vuln.cve_id}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          CVSS: {vuln.cvss_score ?? '—'}
+                          {vuln.port && ` · Port: ${vuln.port}`}
+                          {vuln.ai_analyzed && !vuln.ai_priority_score && ' · Analysée par IA'}
+                        </p>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </CardContent>
+            </Card>
+          </>
+        )}
+      </div>
     </>
   );
 }
-

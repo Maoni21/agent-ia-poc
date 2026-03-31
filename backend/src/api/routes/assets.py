@@ -92,26 +92,11 @@ def create_asset(
 
     Règles:
     - IP valide (IPv4/IPv6)
-    - Pas de doublon d'IP dans la même organization
+    - Les doublons d'IP sont autorisés (ex: NAT / environnements partagés)
     """
     _validate_ip(payload.ip_address)
 
     org_id = current_user["organization_id"]
-
-    # Vérifier doublon IP dans l'organization
-    existing = (
-        db.query(Asset)
-        .filter(
-            Asset.organization_id == org_id,
-            Asset.ip_address == payload.ip_address,
-        )
-        .first()
-    )
-    if existing:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Un asset avec cette adresse IP existe déjà dans l'organisation.",
-        )
 
     tags = [t.strip() for t in (payload.tags or []) if t.strip()]
 
@@ -182,7 +167,7 @@ def update_asset(
 
     - Toujours limité à l'organization du user
     - IP valide si changée
-    - Pas de doublon IP dans la même organization
+    - Les doublons d'IP sont autorisés (ex: NAT / environnements partagés)
     """
     org_id = current_user["organization_id"]
 
@@ -196,21 +181,6 @@ def update_asset(
 
     if payload.ip_address and payload.ip_address != asset.ip_address:
         _validate_ip(payload.ip_address)
-        # Vérifier doublon IP
-        existing = (
-            db.query(Asset)
-            .filter(
-                Asset.organization_id == org_id,
-                Asset.ip_address == payload.ip_address,
-                Asset.id != asset.id,
-            )
-            .first()
-        )
-        if existing:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Un autre asset possède déjà cette adresse IP dans l'organisation.",
-            )
         asset.ip_address = payload.ip_address
 
     # Mise à jour des autres champs

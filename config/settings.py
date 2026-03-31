@@ -15,11 +15,12 @@ from typing import Optional, Dict, Any
 from dataclasses import dataclass
 from dotenv import load_dotenv
 
-# Charger les variables d'environnement
-load_dotenv()
-
-# Chemin racine du projet
+# Chemin racine du projet (avant load_dotenv pour chemins explicites)
 PROJECT_ROOT = Path(__file__).parent.parent
+
+# Charger .env racine puis backend/.env (ce dernier prime pour uvicorn lancé depuis backend/)
+load_dotenv(PROJECT_ROOT / ".env")
+load_dotenv(PROJECT_ROOT / "backend" / ".env", override=True)
 DATA_PATH = PROJECT_ROOT / "data"
 LOG_PATH = PROJECT_ROOT / "logs"
 CONFIG_PATH = PROJECT_ROOT / "config"

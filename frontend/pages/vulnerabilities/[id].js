@@ -2,35 +2,23 @@ import Head from 'next/head';
 import { useRouter } from 'next/router';
 import { useEffect, useState } from 'react';
 import {
-  Box,
-  Container,
-  Typography,
-  Paper,
-  Chip,
-  CircularProgress,
-  Alert,
-  Button,
-  TextField,
-} from '@mui/material';
-import Layout from '../../components/Layout';
+  ArrowLeft, Sparkles, Wrench, Code2, Play, Copy, CheckCircle, Loader2,
+} from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { SeverityBadge } from '@/components/ui/severity-badge';
+import { CVSSMeter } from '@/components/ui/cvss-meter';
+import { StatusBadge } from '@/components/ui/status-badge';
+import { Separator } from '@/components/ui/separator';
 import vulnerabilitiesService from '../../lib/services/vulnerabilitiesService';
 import scriptsService from '../../lib/services/scriptsService';
 import { api } from '../../lib/services/api';
-
-const severityColor = (severity) => {
-  switch ((severity || '').toUpperCase()) {
-    case 'CRITICAL':
-      return 'error';
-    case 'HIGH':
-      return 'warning';
-    case 'MEDIUM':
-      return 'info';
-    case 'LOW':
-      return 'success';
-    default:
-      return 'default';
-  }
-};
 
 export default function VulnerabilityDetailsPage() {
   const router = useRouter();
@@ -45,6 +33,7 @@ export default function VulnerabilityDetailsPage() {
   const [scriptLoading, setScriptLoading] = useState(false);
   const [scriptError, setScriptError] = useState(null);
   const [script, setScript] = useState(null);
+  const [copied, setCopied] = useState(false);
 
   const [sshHost, setSshHost] = useState('');
   const [sshUser, setSshUser] = useState('');
@@ -57,7 +46,7 @@ export default function VulnerabilityDetailsPage() {
     setError(null);
     try {
       const data = await api.get(`/api/v1/vulnerabilities/${id}`);
-      setVuln(data.data || data); // intercepteur Axios peut wrapper
+      setVuln(data.data || data);
     } catch (err) {
       setError(err.message || 'Erreur lors du chargement de la vulnérabilité');
     } finally {
@@ -65,22 +54,17 @@ export default function VulnerabilityDetailsPage() {
     }
   };
 
-  useEffect(() => {
-    loadVuln();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id]);
+  useEffect(() => { loadVuln(); }, [id]);
 
   const handleAnalyze = async () => {
     if (!id) return;
     setAnalyzing(true);
     try {
-      const result = await vulnerabilitiesService.analyzeVulnerability(id);
-      // Recharger la vuln pour récupérer ai_analysis / ai_priority_score
+      await vulnerabilitiesService.analyzeVulnerability(id);
       await loadVuln();
       alert('Analyse IA terminée.');
-      console.log('Analyse IA', result);
     } catch (err) {
-      alert('Erreur lors de lanalyse IA: ' + (err.message || 'inconnue'));
+      alert("Erreur analyse IA: " + (err.message || 'inconnue'));
     } finally {
       setAnalyzing(false);
     }
@@ -96,7 +80,6 @@ export default function VulnerabilityDetailsPage() {
         script_type: 'bash',
       });
       if (result.script_id) {
-        // Charger les détails du script
         const scriptDetails = await scriptsService.getScript(result.script_id);
         setScript(scriptDetails);
       }
@@ -110,14 +93,12 @@ export default function VulnerabilityDetailsPage() {
   const handleApproveScript = async () => {
     if (!script?.id) return;
     setScriptLoading(true);
-    setScriptError(null);
     try {
       await api.put(`/api/v1/remediation-scripts/${script.id}/approve`);
       const refreshed = await scriptsService.getScript(script.id);
       setScript(refreshed);
-      alert('Script approuvé.');
     } catch (err) {
-      setScriptError(err.message || 'Erreur lors de lapprobation du script');
+      setScriptError(err.message || "Erreur approbation");
     } finally {
       setScriptLoading(false);
     }
@@ -130,26 +111,30 @@ export default function VulnerabilityDetailsPage() {
       return;
     }
     setExecuting(true);
-    setScriptError(null);
     try {
       await api.post(`/api/v1/remediation-scripts/${script.id}/execute`, {
-        host: sshHost,
-        username: sshUser,
-        password: sshPassword,
+        host: sshHost, username: sshUser, password: sshPassword,
       });
       alert('Exécution du script lancée.');
     } catch (err) {
-      setScriptError(err.message || 'Erreur lors de lexécution du script');
+      setScriptError(err.message || 'Erreur exécution');
     } finally {
       setExecuting(false);
     }
   };
 
+  const handleCopyScript = () => {
+    if (script?.script_content) {
+      navigator.clipboard.writeText(script.script_content);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  };
+
   const formatScore = (val) => {
-    if (val == null) return '-';
+    if (val == null) return '—';
     const n = typeof val === 'number' ? val : parseFloat(val);
-    if (Number.isNaN(n)) return String(val);
-    return n.toFixed(1);
+    return Number.isNaN(n) ? String(val) : n.toFixed(1);
   };
 
   return (
@@ -157,231 +142,282 @@ export default function VulnerabilityDetailsPage() {
       <Head>
         <title>Détails vulnérabilité - CyberSec AI</title>
       </Head>
-      <Layout>
-        <Container maxWidth="md" sx={{ mt: 4, mb: 4 }}>
-          {error && (
-            <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>
-              {error}
-            </Alert>
-          )}
 
-          {loading ? (
-            <Box display="flex" justifyContent="center" p={3}>
-              <CircularProgress />
-            </Box>
-          ) : !vuln ? (
-            <Alert severity="info">Vulnérabilité introuvable.</Alert>
-          ) : (
-            <>
-              <Paper sx={{ p: 3, mb: 3 }}>
-                <Typography variant="h5" gutterBottom>
-                  {vuln.title || vuln.name}
-                </Typography>
-
-                <Box display="flex" flexWrap="wrap" gap={1} mb={1}>
-                  <Chip
-                    label={vuln.severity}
-                    color={severityColor(vuln.severity)}
-                    size="small"
-                  />
-                  {vuln.cvss_score != null && (
-                    <Chip
-                      label={`CVSS ${formatScore(vuln.cvss_score)}`}
-                      size="small"
-                      variant="outlined"
-                    />
-                  )}
-                  <Chip
-                    label={vuln.status || 'open'}
-                    size="small"
-                    variant="outlined"
-                  />
-                </Box>
-
-                <Typography variant="body2" color="text.secondary" gutterBottom>
+      <div className="space-y-6 max-w-4xl mx-auto">
+        {/* Header */}
+        <div className="flex items-start gap-3">
+          <Button variant="ghost" size="icon" onClick={() => router.push('/vulnerabilities')}>
+            <ArrowLeft className="h-4 w-4" />
+          </Button>
+          <div className="flex-1 min-w-0">
+            {loading ? (
+              <Skeleton className="h-8 w-64" />
+            ) : vuln ? (
+              <>
+                <h1 className="text-2xl font-bold truncate">
+                  {vuln.title || vuln.name || vuln.cve_id}
+                </h1>
+                <div className="flex flex-wrap gap-2 mt-2">
+                  <SeverityBadge severity={vuln.severity} />
                   {vuln.cve_id && (
-                    <>
-                      <strong>CVE :</strong> {vuln.cve_id}
-                      <br />
-                    </>
+                    <Badge variant="outline" className="font-mono">{vuln.cve_id}</Badge>
                   )}
-                  <strong>ID :</strong> {vuln.id}
-                </Typography>
-
-                <Typography variant="body1" sx={{ mt: 2 }}>
-                  {vuln.description || 'Aucune description disponible.'}
-                </Typography>
-
-                <Box sx={{ mt: 2 }}>
-                  {vuln.service && (
-                    <Typography variant="body2" color="text.secondary">
-                      <strong>Service :</strong> {vuln.service} ({vuln.port ?? 'n/a'}/{vuln.protocol || 'tcp'})
-                    </Typography>
+                  <StatusBadge status={vuln.status || 'open'} />
+                  {vuln.ai_analyzed && (
+                    <Badge variant="secondary">
+                      <Sparkles className="mr-1 h-3 w-3" />
+                      Analysée IA
+                    </Badge>
                   )}
-                  {vuln.affected_package && (
-                    <Typography variant="body2" color="text.secondary">
-                      <strong>Package :</strong> {vuln.affected_package}{' '}
-                      {vuln.affected_version && `(${vuln.affected_version})`}
-                    </Typography>
-                  )}
-                </Box>
-              </Paper>
+                </div>
+              </>
+            ) : null}
+          </div>
+        </div>
 
-              <Paper sx={{ p: 3, mb: 3 }}>
-                <Typography variant="h6" gutterBottom>
-                  Analyse IA
-                </Typography>
-                {vuln.ai_analysis ? (
-                  <Box sx={{ mb: 2 }}>
-                    <pre style={{ whiteSpace: 'pre-wrap', fontSize: 12 }}>
-                      {JSON.stringify(vuln.ai_analysis, null, 2)}
-                    </pre>
-                    {vuln.ai_priority_score != null && (
-                      <Typography variant="body2" color="text.secondary">
-                        <strong>Priority score :</strong> {vuln.ai_priority_score}/10
-                      </Typography>
+        {error && (
+          <Alert variant="destructive">
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        )}
+
+        {loading ? (
+          <div className="space-y-4">
+            <Skeleton className="h-32 w-full" />
+            <Skeleton className="h-48 w-full" />
+          </div>
+        ) : !vuln ? (
+          <Alert><AlertDescription>Vulnérabilité introuvable.</AlertDescription></Alert>
+        ) : (
+          <>
+            {/* CVSS meter */}
+            {vuln.cvss_score != null && (
+              <Card>
+                <CardContent className="pt-6">
+                  <CVSSMeter score={vuln.cvss_score} />
+                </CardContent>
+              </Card>
+            )}
+
+            <Tabs defaultValue="overview">
+              <TabsList className="grid w-full grid-cols-3">
+                <TabsTrigger value="overview">Vue d&apos;ensemble</TabsTrigger>
+                <TabsTrigger value="ai">Analyse IA</TabsTrigger>
+                <TabsTrigger value="remediation">Remédiation</TabsTrigger>
+              </TabsList>
+
+              {/* Tab Overview */}
+              <TabsContent value="overview" className="space-y-4">
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-base">Description</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <p className="text-sm leading-relaxed text-muted-foreground">
+                      {vuln.description || 'Aucune description disponible.'}
+                    </p>
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-base">Détails techniques</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-3 text-sm">
+                    {[
+                      ['ID', <span key="i" className="font-mono text-xs">{vuln.id}</span>],
+                      vuln.cve_id && ['CVE', <Badge key="c" variant="outline" className="font-mono">{vuln.cve_id}</Badge>],
+                      ['Sévérité', <SeverityBadge key="s" severity={vuln.severity} />],
+                      vuln.cvss_score != null && ['CVSS', `${formatScore(vuln.cvss_score)}/10`],
+                      vuln.service && ['Service', `${vuln.service}${vuln.port ? ` (port ${vuln.port}/${vuln.protocol || 'tcp'})` : ''}`],
+                      vuln.affected_package && ['Package', `${vuln.affected_package}${vuln.affected_version ? ` (${vuln.affected_version})` : ''}`],
+                    ].filter(Boolean).map(([label, val]) => (
+                      <div key={label} className="flex justify-between items-center">
+                        <span className="text-muted-foreground">{label}</span>
+                        <span className="font-medium">{val}</span>
+                      </div>
+                    ))}
+                  </CardContent>
+                </Card>
+              </TabsContent>
+
+              {/* Tab AI Analysis */}
+              <TabsContent value="ai" className="space-y-4">
+                <Card>
+                  <CardHeader className="flex flex-row items-center justify-between">
+                    <div>
+                      <CardTitle className="text-base">Analyse IA</CardTitle>
+                      <CardDescription>
+                        {vuln.ai_analyzed
+                          ? 'Analyse effectuée par Intelligence Artificielle'
+                          : 'Aucune analyse IA disponible'}
+                      </CardDescription>
+                    </div>
+                    <Button onClick={handleAnalyze} disabled={analyzing}>
+                      {analyzing ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          Analyse...
+                        </>
+                      ) : (
+                        <>
+                          <Sparkles className="mr-2 h-4 w-4" />
+                          {vuln.ai_analyzed ? 'Relancer' : 'Analyser'}
+                        </>
+                      )}
+                    </Button>
+                  </CardHeader>
+                  <CardContent>
+                    {vuln.ai_analysis ? (
+                      <div className="space-y-4">
+                        {vuln.ai_priority_score != null && (
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm text-muted-foreground">Score de priorité IA :</span>
+                            <Badge className="text-base font-bold px-3 py-1">
+                              {vuln.ai_priority_score}/10
+                            </Badge>
+                          </div>
+                        )}
+                        <Separator />
+                        <pre className="text-xs bg-muted rounded-lg p-4 overflow-x-auto whitespace-pre-wrap">
+                          {typeof vuln.ai_analysis === 'string'
+                            ? vuln.ai_analysis
+                            : JSON.stringify(vuln.ai_analysis, null, 2)}
+                        </pre>
+                      </div>
+                    ) : (
+                      <p className="text-sm text-muted-foreground py-4 text-center">
+                        Cliquez sur &quot;Analyser&quot; pour lancer l&apos;analyse IA
+                      </p>
                     )}
-                  </Box>
-                ) : (
-                  <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                    Aucune analyse IA enregistrée pour le moment.
-                  </Typography>
-                )}
+                  </CardContent>
+                </Card>
+              </TabsContent>
 
-                <Button
-                  variant="contained"
-                  onClick={handleAnalyze}
-                  disabled={analyzing}
-                >
-                  {analyzing ? 'Analyse en cours...' : 'Analyser avec IA'}
-                </Button>
-              </Paper>
-
-              <Paper sx={{ p: 3 }}>
-                <Typography variant="h6" gutterBottom>
-                  Script de remédiation
-                </Typography>
-
+              {/* Tab Remediation */}
+              <TabsContent value="remediation" className="space-y-4">
                 {scriptError && (
-                  <Alert
-                    severity="error"
-                    sx={{ mb: 2 }}
-                    onClose={() => setScriptError(null)}
-                  >
-                    {scriptError}
+                  <Alert variant="destructive">
+                    <AlertDescription>{scriptError}</AlertDescription>
                   </Alert>
                 )}
 
                 {!script ? (
-                  <Box sx={{ mb: 2 }}>
-                    <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-                      Aucun script généré pour cette vulnérabilité.
-                    </Typography>
-                    <Button
-                      variant="contained"
-                      onClick={handleGenerateScript}
-                      disabled={scriptGenerating}
-                    >
-                      {scriptGenerating ? 'Génération...' : 'Générer un script de correction'}
-                    </Button>
-                  </Box>
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="text-base">Script de remédiation</CardTitle>
+                      <CardDescription>Générez un script de correction pour cette vulnérabilité</CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      <Button onClick={handleGenerateScript} disabled={scriptGenerating}>
+                        {scriptGenerating ? (
+                          <>
+                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                            Génération...
+                          </>
+                        ) : (
+                          <>
+                            <Wrench className="mr-2 h-4 w-4" />
+                            Générer le script
+                          </>
+                        )}
+                      </Button>
+                    </CardContent>
+                  </Card>
                 ) : (
                   <>
-                    <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-                      <strong>Type :</strong> {script.script_type} •{' '}
-                      <strong>OS cible :</strong> {script.target_os}
-                    </Typography>
-                    <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                      <strong>Statut :</strong> {script.execution_status}
-                    </Typography>
-
-                    <Box sx={{ mb: 2 }}>
-                      <Typography variant="subtitle2" gutterBottom>
-                        Script
-                      </Typography>
-                      <pre
-                        style={{
-                          background: '#111827',
-                          color: '#e5e7eb',
-                          padding: '12px',
-                          borderRadius: 4,
-                          fontSize: 12,
-                          overflowX: 'auto',
-                        }}
-                      >
-                        {script.script_content || '# (vide)'}
-                      </pre>
-                    </Box>
+                    <Card>
+                      <CardHeader className="flex flex-row items-center justify-between">
+                        <div>
+                          <CardTitle className="text-base">Script de correction</CardTitle>
+                          <CardDescription>
+                            {script.script_type} · OS cible : {script.target_os}
+                          </CardDescription>
+                        </div>
+                        <div className="flex gap-2">
+                          <Button variant="outline" size="sm" onClick={handleCopyScript}>
+                            {copied ? (
+                              <><CheckCircle className="mr-2 h-4 w-4 text-green-500" />Copié</>
+                            ) : (
+                              <><Copy className="mr-2 h-4 w-4" />Copier</>
+                            )}
+                          </Button>
+                        </div>
+                      </CardHeader>
+                      <CardContent>
+                        <pre className="bg-gray-950 text-gray-100 rounded-lg p-4 text-xs overflow-x-auto max-h-64">
+                          {script.script_content || '# (vide)'}
+                        </pre>
+                      </CardContent>
+                    </Card>
 
                     {script.rollback_script && (
-                      <Box sx={{ mb: 2 }}>
-                        <Typography variant="subtitle2" gutterBottom>
-                          Rollback script
-                        </Typography>
-                        <pre
-                          style={{
-                            background: '#111827',
-                            color: '#e5e7eb',
-                            padding: '12px',
-                            borderRadius: 4,
-                            fontSize: 12,
-                            overflowX: 'auto',
-                          }}
-                        >
-                          {script.rollback_script}
-                        </pre>
-                      </Box>
+                      <Card>
+                        <CardHeader>
+                          <CardTitle className="text-base text-amber-600">Script de rollback</CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                          <pre className="bg-gray-950 text-gray-100 rounded-lg p-4 text-xs overflow-x-auto max-h-40">
+                            {script.rollback_script}
+                          </pre>
+                        </CardContent>
+                      </Card>
                     )}
 
-                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, mb: 2 }}>
-                      <Box sx={{ display: 'flex', gap: 1 }}>
-                        <Button
-                          variant="outlined"
-                          onClick={handleApproveScript}
-                          disabled={scriptLoading || script.execution_status === 'approved'}
-                        >
-                          Approuver le script
-                        </Button>
-                        <Button
-                          variant="contained"
-                          color="success"
-                          onClick={handleExecuteScript}
-                          disabled={executing}
-                        >
-                          {executing ? 'Exécution...' : 'Approuver & Exécuter (SSH)'}
-                        </Button>
-                      </Box>
-
-                      <Box sx={{ mt: 1, display: 'flex', flexDirection: 'column', gap: 1 }}>
-                        <TextField
-                          label="SSH host"
-                          size="small"
-                          value={sshHost}
-                          onChange={(e) => setSshHost(e.target.value)}
-                        />
-                        <TextField
-                          label="SSH username"
-                          size="small"
-                          value={sshUser}
-                          onChange={(e) => setSshUser(e.target.value)}
-                        />
-                        <TextField
-                          label="SSH password"
-                          size="small"
-                          type="password"
-                          value={sshPassword}
-                          onChange={(e) => setSshPassword(e.target.value)}
-                        />
-                      </Box>
-                    </Box>
+                    <Card>
+                      <CardHeader>
+                        <CardTitle className="text-base">Exécution SSH</CardTitle>
+                        <CardDescription>Exécutez le script directement sur la cible via SSH</CardDescription>
+                      </CardHeader>
+                      <CardContent className="space-y-4">
+                        <Alert variant="warning">
+                          <AlertDescription>
+                            ⚠️ Cette action modifie le système cible. Vérifiez le script avant d&apos;exécuter.
+                          </AlertDescription>
+                        </Alert>
+                        <div className="grid gap-3 md:grid-cols-3">
+                          <div className="space-y-1">
+                            <Label>SSH Host</Label>
+                            <Input placeholder="192.168.1.100" value={sshHost} onChange={(e) => setSshHost(e.target.value)} />
+                          </div>
+                          <div className="space-y-1">
+                            <Label>Username</Label>
+                            <Input placeholder="root" value={sshUser} onChange={(e) => setSshUser(e.target.value)} />
+                          </div>
+                          <div className="space-y-1">
+                            <Label>Password</Label>
+                            <Input type="password" placeholder="••••••" value={sshPassword} onChange={(e) => setSshPassword(e.target.value)} />
+                          </div>
+                        </div>
+                        <div className="flex gap-2">
+                          <Button
+                            variant="outline"
+                            onClick={handleApproveScript}
+                            disabled={scriptLoading || script.execution_status === 'approved'}
+                          >
+                            Approuver le script
+                          </Button>
+                          <Button
+                            variant="destructive"
+                            onClick={handleExecuteScript}
+                            disabled={executing}
+                          >
+                            {executing ? (
+                              <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Exécution...</>
+                            ) : (
+                              <><Play className="mr-2 h-4 w-4" />Exécuter (SSH)</>
+                            )}
+                          </Button>
+                        </div>
+                      </CardContent>
+                    </Card>
                   </>
                 )}
-              </Paper>
-            </>
-          )}
-        </Container>
-      </Layout>
+              </TabsContent>
+            </Tabs>
+          </>
+        )}
+      </div>
     </>
   );
 }
-

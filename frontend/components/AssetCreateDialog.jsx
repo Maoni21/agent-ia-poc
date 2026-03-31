@@ -117,7 +117,7 @@ export default function AssetCreateDialog({
         <TextField
           fullWidth
           margin="normal"
-          label="Nom de l’asset"
+          label="Nom de l'asset"
           name="hostname"
           value={form.hostname}
           onChange={handleChange}
@@ -128,7 +128,7 @@ export default function AssetCreateDialog({
           select
           fullWidth
           margin="normal"
-          label="Type d’asset"
+          label="Type d'asset"
           name="asset_type"
           value={form.asset_type}
           onChange={handleChange}
