@@ -15,6 +15,15 @@ ROOT_DIR = BACKEND_DIR.parent.parent
 sys.path.insert(0, str(BACKEND_DIR))
 sys.path.insert(0, str(ROOT_DIR))
 
+# Charger le fichier .env automatiquement
+try:
+    from dotenv import load_dotenv
+    env_file = BACKEND_DIR / ".env"
+    if env_file.exists():
+        load_dotenv(env_file, override=False)
+except ImportError:
+    pass  # python-dotenv non installé, on continue sans
+
 # Import des modèles SQLAlchemy
 from src.database.models import Base
 

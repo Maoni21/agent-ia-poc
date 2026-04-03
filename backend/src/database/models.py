@@ -707,6 +707,155 @@ class WebhookSubscription(Base):
     )
 
 
+# ============================================================================
+# TABLE 12: REMEDIATION_PLANS
+# ============================================================================
+
+
+class RemediationPlan(Base):
+    __tablename__ = "remediation_plans"
+
+    scan_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("scans.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+
+    # Résultat de l'analyse IA
+    analysis_result: Mapped[Optional[dict]] = mapped_column(JSON)
+    # Plan d'exécution step-by-step
+    execution_plan: Mapped[Optional[dict]] = mapped_column(JSON)
+
+    # Estimations
+    estimated_duration: Mapped[Optional[int]] = mapped_column(Integer)  # minutes
+    estimated_downtime: Mapped[Optional[int]] = mapped_column(Integer)  # minutes
+
+    # Statut du plan
+    status: Mapped[str] = mapped_column(
+        String(50), nullable=False, default="pending_approval"
+    )
+
+    # Approbation
+    approved_by: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id")
+    )
+    approved_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+
+    # Exécution
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    execution_log: Mapped[Optional[dict]] = mapped_column(JSON)
+
+    # Relations
+    scan: Mapped["Scan"] = relationship("Scan")
+    organization: Mapped["Organization"] = relationship("Organization")
+    executions: Mapped[List["RemediationExecution"]] = relationship(
+        back_populates="remediation_plan", cascade="all, delete-orphan"
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('analyzing', 'pending_approval', 'approved', 'executing', 'completed', 'failed', 'cancelled')",
+            name="check_plan_status",
+        ),
+        Index("idx_plan_scan", "scan_id"),
+        Index("idx_plan_org", "organization_id"),
+        Index("idx_plan_status", "status"),
+    )
+
+
+# ============================================================================
+# TABLE 13: REMEDIATION_EXECUTIONS
+# ============================================================================
+
+
+class RemediationExecution(Base):
+    __tablename__ = "remediation_executions"
+
+    remediation_plan_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("remediation_plans.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+
+    step_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    step_name: Mapped[str] = mapped_column(String(500), nullable=False)
+    script_content: Mapped[Optional[str]] = mapped_column(Text)
+    rollback_script: Mapped[Optional[str]] = mapped_column(Text)
+
+    # Statut de l'étape
+    status: Mapped[str] = mapped_column(
+        String(50), nullable=False, default="pending"
+    )
+
+    # Timing
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    duration: Mapped[Optional[int]] = mapped_column(Integer)  # secondes
+
+    # Résultats
+    stdout: Mapped[Optional[str]] = mapped_column(Text)
+    stderr: Mapped[Optional[str]] = mapped_column(Text)
+    exit_code: Mapped[Optional[int]] = mapped_column(Integer)
+
+    # Relation
+    remediation_plan: Mapped["RemediationPlan"] = relationship(back_populates="executions")
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending', 'running', 'completed', 'failed', 'rolled_back', 'skipped')",
+            name="check_exec_status",
+        ),
+        Index("idx_exec_plan", "remediation_plan_id"),
+        Index("idx_exec_status", "status"),
+    )
+
+
+# ============================================================================
+# TABLE 14: VALIDATION_SCANS
+# ============================================================================
+
+
+class ValidationScan(Base):
+    __tablename__ = "validation_scans"
+
+    remediation_plan_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("remediation_plans.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    scan_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("scans.id", ondelete="SET NULL"),
+    )
+
+    before_score: Mapped[Optional[int]] = mapped_column(Integer)
+    after_score: Mapped[Optional[int]] = mapped_column(Integer)
+
+    fixed_vulnerabilities: Mapped[Optional[dict]] = mapped_column(JSON)
+    remaining_vulnerabilities: Mapped[Optional[dict]] = mapped_column(JSON)
+
+    status: Mapped[str] = mapped_column(
+        String(50), nullable=False, default="pending"
+    )
+
+    # Relations
+    remediation_plan: Mapped["RemediationPlan"] = relationship("RemediationPlan")
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending', 'scanning', 'completed', 'failed')",
+            name="check_val_status",
+        ),
+        Index("idx_val_plan", "remediation_plan_id"),
+    )
+
+
 __all__ = [
     "Base",
     "Organization",
@@ -720,5 +869,8 @@ __all__ = [
     "APIKey",
     "Notification",
     "WebhookSubscription",
+    "RemediationPlan",
+    "RemediationExecution",
+    "ValidationScan",
 ]
 

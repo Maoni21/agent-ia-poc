@@ -93,7 +93,7 @@ def upgrade() -> None:
         ),
         sa.Column(
             "permissions",
-            postgresql.JSONB(astext_type=sa.Text()),
+            sa.JSON(),
             nullable=True,
             server_default=sa.text("'[]'::jsonb"),
         ),
@@ -269,7 +269,7 @@ def upgrade() -> None:
         sa.Column("nmap_output", sa.Text(), nullable=True),
         sa.Column(
             "scan_results",
-            postgresql.JSONB(astext_type=sa.Text()),
+            sa.JSON(),
             nullable=True,
         ),
         sa.Column("error_message", sa.Text(), nullable=True),
@@ -351,7 +351,7 @@ def upgrade() -> None:
         sa.Column("ai_analyzed", sa.Boolean(), nullable=False, server_default=sa.text("FALSE")),
         sa.Column(
             "ai_analysis",
-            postgresql.JSONB(astext_type=sa.Text()),
+            sa.JSON(),
             nullable=True,
         ),
         sa.Column("ai_priority_score", sa.Integer(), nullable=True),
@@ -401,7 +401,7 @@ def upgrade() -> None:
         ),
         sa.Column(
             "references",
-            postgresql.JSONB(astext_type=sa.Text()),
+            sa.JSON(),
             nullable=False,
             server_default=sa.text("'[]'::jsonb"),
         ),
@@ -475,7 +475,7 @@ def upgrade() -> None:
         sa.Column("severity", sa.String(length=20), nullable=True),
         sa.Column(
             "affected_products",
-            postgresql.JSONB(astext_type=sa.Text()),
+            sa.JSON(),
             nullable=False,
             server_default=sa.text("'[]'::jsonb"),
         ),
@@ -486,7 +486,7 @@ def upgrade() -> None:
         ),
         sa.Column(
             "references",
-            postgresql.JSONB(astext_type=sa.Text()),
+            sa.JSON(),
             nullable=False,
             server_default=sa.text("'[]'::jsonb"),
         ),
@@ -499,7 +499,7 @@ def upgrade() -> None:
         sa.Column("exploit_maturity", sa.String(length=50), nullable=True),
         sa.Column(
             "exploit_references",
-            postgresql.JSONB(astext_type=sa.Text()),
+            sa.JSON(),
             nullable=False,
             server_default=sa.text("'[]'::jsonb"),
         ),
@@ -567,7 +567,7 @@ def upgrade() -> None:
         ),
         sa.Column(
             "validation_results",
-            postgresql.JSONB(astext_type=sa.Text()),
+            sa.JSON(),
             nullable=True,
         ),
         sa.Column(
@@ -658,7 +658,7 @@ def upgrade() -> None:
         sa.Column("user_agent", sa.Text(), nullable=True),
         sa.Column(
             "metadata",
-            postgresql.JSONB(astext_type=sa.Text()),
+            sa.JSON(),
             nullable=False,
             server_default=sa.text("'{}'::jsonb"),
         ),
@@ -791,7 +791,7 @@ def upgrade() -> None:
         ),
         sa.Column(
             "metadata",
-            postgresql.JSONB(astext_type=sa.Text()),
+            sa.JSON(),
             nullable=False,
             server_default=sa.text("'{}'::jsonb"),
         ),

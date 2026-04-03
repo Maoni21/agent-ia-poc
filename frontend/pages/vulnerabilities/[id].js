@@ -2,7 +2,9 @@ import Head from 'next/head';
 import { useRouter } from 'next/router';
 import { useEffect, useState } from 'react';
 import {
-  ArrowLeft, Sparkles, Wrench, Code2, Play, Copy, CheckCircle, Loader2,
+  ArrowLeft, Sparkles, Wrench, Play, Copy, CheckCircle, Loader2,
+  AlertTriangle, TrendingUp, ShieldAlert, Target, Link2, CheckSquare,
+  XCircle, Info, ChevronRight,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -243,55 +245,206 @@ export default function VulnerabilityDetailsPage() {
 
               {/* Tab AI Analysis */}
               <TabsContent value="ai" className="space-y-4">
+                {/* Header card with action button */}
                 <Card>
-                  <CardHeader className="flex flex-row items-center justify-between">
+                  <CardHeader className="flex flex-row items-center justify-between pb-3">
                     <div>
                       <CardTitle className="text-base">Analyse IA</CardTitle>
                       <CardDescription>
                         {vuln.ai_analyzed
                           ? 'Analyse effectuée par Intelligence Artificielle'
-                          : 'Aucune analyse IA disponible'}
+                          : 'Aucune analyse IA disponible pour cette vulnérabilité'}
                       </CardDescription>
                     </div>
                     <Button onClick={handleAnalyze} disabled={analyzing}>
                       {analyzing ? (
-                        <>
-                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                          Analyse...
-                        </>
+                        <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Analyse...</>
                       ) : (
-                        <>
-                          <Sparkles className="mr-2 h-4 w-4" />
-                          {vuln.ai_analyzed ? 'Relancer' : 'Analyser'}
-                        </>
+                        <><Sparkles className="mr-2 h-4 w-4" />{vuln.ai_analyzed ? 'Relancer' : 'Analyser'}</>
                       )}
                     </Button>
                   </CardHeader>
-                  <CardContent>
-                    {vuln.ai_analysis ? (
-                      <div className="space-y-4">
-                        {vuln.ai_priority_score != null && (
-                          <div className="flex items-center gap-2">
-                            <span className="text-sm text-muted-foreground">Score de priorité IA :</span>
-                            <Badge className="text-base font-bold px-3 py-1">
-                              {vuln.ai_priority_score}/10
-                            </Badge>
-                          </div>
+                </Card>
+
+                {vuln.ai_analysis ? (() => {
+                  const ai = typeof vuln.ai_analysis === 'string'
+                    ? (() => { try { return JSON.parse(vuln.ai_analysis); } catch { return null; } })()
+                    : vuln.ai_analysis;
+
+                  if (!ai) return (
+                    <Card><CardContent className="pt-6">
+                      <pre className="text-xs bg-muted rounded-lg p-4 overflow-x-auto whitespace-pre-wrap">
+                        {String(vuln.ai_analysis)}
+                      </pre>
+                    </CardContent></Card>
+                  );
+
+                  return (
+                    <div className="space-y-4">
+                      {/* Scores row */}
+                      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                        {(ai.priority_score ?? vuln.ai_priority_score) != null && (
+                          <Card className="border-primary/30 bg-primary/5">
+                            <CardContent className="pt-4 pb-4 text-center">
+                              <p className="text-xs text-muted-foreground mb-1">Score de priorité IA</p>
+                              <p className="text-3xl font-bold text-primary">
+                                {ai.priority_score ?? vuln.ai_priority_score}
+                                <span className="text-sm font-normal text-muted-foreground">/10</span>
+                              </p>
+                            </CardContent>
+                          </Card>
                         )}
-                        <Separator />
-                        <pre className="text-xs bg-muted rounded-lg p-4 overflow-x-auto whitespace-pre-wrap">
-                          {typeof vuln.ai_analysis === 'string'
-                            ? vuln.ai_analysis
-                            : JSON.stringify(vuln.ai_analysis, null, 2)}
-                        </pre>
+                        {ai.exploitability && (
+                          <Card className={ai.exploitability === 'HIGH' ? 'border-red-500/30 bg-red-500/5' : 'border-amber-500/30 bg-amber-500/5'}>
+                            <CardContent className="pt-4 pb-4 text-center">
+                              <p className="text-xs text-muted-foreground mb-1">Exploitabilité</p>
+                              <Badge variant={ai.exploitability === 'HIGH' ? 'destructive' : 'warning'} className="text-sm px-3">
+                                {ai.exploitability}
+                              </Badge>
+                            </CardContent>
+                          </Card>
+                        )}
+                        {ai.is_false_positive != null && (
+                          <Card className={ai.is_false_positive ? 'border-green-500/30 bg-green-500/5' : 'border-orange-500/30 bg-orange-500/5'}>
+                            <CardContent className="pt-4 pb-4 text-center">
+                              <p className="text-xs text-muted-foreground mb-1">Faux positif</p>
+                              <div className="flex items-center justify-center gap-1.5">
+                                {ai.is_false_positive
+                                  ? <XCircle className="h-5 w-5 text-green-600" />
+                                  : <CheckSquare className="h-5 w-5 text-orange-500" />}
+                                <span className="font-semibold text-sm">
+                                  {ai.is_false_positive ? 'Probable' : 'Non'}
+                                </span>
+                              </div>
+                              {ai.false_positive_confidence != null && (
+                                <p className="text-xs text-muted-foreground mt-1">
+                                  confiance : {Math.round(ai.false_positive_confidence * 100)}%
+                                </p>
+                              )}
+                            </CardContent>
+                          </Card>
+                        )}
                       </div>
-                    ) : (
-                      <p className="text-sm text-muted-foreground py-4 text-center">
+
+                      {/* AI Explanation */}
+                      {ai.ai_explanation && (
+                        <Card>
+                          <CardHeader className="pb-3">
+                            <CardTitle className="text-sm flex items-center gap-2">
+                              <Info className="h-4 w-4 text-blue-500" />
+                              Explication de l&apos;IA
+                            </CardTitle>
+                          </CardHeader>
+                          <CardContent>
+                            <p className="text-sm leading-relaxed text-foreground">{ai.ai_explanation}</p>
+                          </CardContent>
+                        </Card>
+                      )}
+
+                      {/* Impact cards row */}
+                      {(ai.impact_analysis || ai.business_impact) && (
+                        <div className="grid gap-4 md:grid-cols-2">
+                          {ai.impact_analysis && (
+                            <Card className="border-orange-500/20">
+                              <CardHeader className="pb-2">
+                                <CardTitle className="text-sm flex items-center gap-2">
+                                  <ShieldAlert className="h-4 w-4 text-orange-500" />
+                                  Impact technique
+                                </CardTitle>
+                              </CardHeader>
+                              <CardContent>
+                                <p className="text-sm text-muted-foreground leading-relaxed">{ai.impact_analysis}</p>
+                              </CardContent>
+                            </Card>
+                          )}
+                          {ai.business_impact && (
+                            <Card className="border-red-500/20">
+                              <CardHeader className="pb-2">
+                                <CardTitle className="text-sm flex items-center gap-2">
+                                  <TrendingUp className="h-4 w-4 text-red-500" />
+                                  Impact métier
+                                </CardTitle>
+                              </CardHeader>
+                              <CardContent>
+                                <p className="text-sm text-muted-foreground leading-relaxed">{ai.business_impact}</p>
+                              </CardContent>
+                            </Card>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Recommended actions */}
+                      {ai.recommended_actions?.length > 0 && (
+                        <Card className="border-green-500/20">
+                          <CardHeader className="pb-3">
+                            <CardTitle className="text-sm flex items-center gap-2">
+                              <Target className="h-4 w-4 text-green-600" />
+                              Actions recommandées
+                            </CardTitle>
+                          </CardHeader>
+                          <CardContent>
+                            <ul className="space-y-2">
+                              {ai.recommended_actions.map((action, i) => (
+                                <li key={i} className="flex items-start gap-2 text-sm">
+                                  <ChevronRight className="h-4 w-4 text-green-600 mt-0.5 shrink-0" />
+                                  <span>{action}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          </CardContent>
+                        </Card>
+                      )}
+
+                      {/* False positive reasoning */}
+                      {ai.false_positive_reasoning && (
+                        <Card className="border-muted bg-muted/30">
+                          <CardHeader className="pb-2">
+                            <CardTitle className="text-sm flex items-center gap-2 text-muted-foreground">
+                              <AlertTriangle className="h-4 w-4" />
+                              Raisonnement faux positif
+                            </CardTitle>
+                          </CardHeader>
+                          <CardContent>
+                            <p className="text-sm text-muted-foreground leading-relaxed italic">{ai.false_positive_reasoning}</p>
+                          </CardContent>
+                        </Card>
+                      )}
+
+                      {/* Solution links */}
+                      {ai.solution_links?.length > 0 && (
+                        <Card>
+                          <CardHeader className="pb-2">
+                            <CardTitle className="text-sm flex items-center gap-2">
+                              <Link2 className="h-4 w-4" />
+                              Ressources
+                            </CardTitle>
+                          </CardHeader>
+                          <CardContent>
+                            <ul className="space-y-1">
+                              {ai.solution_links.map((link, i) => (
+                                <li key={i}>
+                                  <a href={link} target="_blank" rel="noopener noreferrer"
+                                    className="text-sm text-blue-600 hover:underline break-all">
+                                    {link}
+                                  </a>
+                                </li>
+                              ))}
+                            </ul>
+                          </CardContent>
+                        </Card>
+                      )}
+                    </div>
+                  );
+                })() : (
+                  <Card>
+                    <CardContent className="py-12 text-center">
+                      <Sparkles className="h-10 w-10 mx-auto text-muted-foreground mb-3" />
+                      <p className="text-sm text-muted-foreground">
                         Cliquez sur &quot;Analyser&quot; pour lancer l&apos;analyse IA
                       </p>
-                    )}
-                  </CardContent>
-                </Card>
+                    </CardContent>
+                  </Card>
+                )}
               </TabsContent>
 
               {/* Tab Remediation */}

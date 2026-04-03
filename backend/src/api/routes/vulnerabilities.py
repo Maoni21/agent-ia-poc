@@ -360,6 +360,64 @@ async def generate_script_for_vulnerability(
 
 
 @router.get(
+    "/remediation-scripts",
+    dependencies=[Depends(require_permission("remediation:create"))],
+)
+def list_remediation_scripts(
+    limit: int = 200,
+    offset: int = 0,
+    execution_status: Optional[str] = None,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+) -> Dict[str, Any]:
+    """
+    Liste tous les scripts de remédiation générés pour l'organisation.
+    """
+    org_id = current_user["organization_id"]
+
+    query = db.query(RemediationScript).filter(
+        RemediationScript.organization_id == org_id
+    )
+    if execution_status:
+        query = query.filter(RemediationScript.execution_status == execution_status)
+
+    total = query.count()
+    scripts = (
+        query
+        .order_by(RemediationScript.created_at.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+
+    return {
+        "scripts": [
+            {
+                "id": str(s.id),
+                "vulnerability_id": str(s.vulnerability_id) if s.vulnerability_id else None,
+                "script_type": s.script_type,
+                "script_content": s.script_content,
+                "rollback_script": s.rollback_script,
+                "target_os": s.target_os,
+                "risk_level": s.risk_level,
+                "requires_reboot": s.requires_reboot,
+                "requires_sudo": s.requires_sudo,
+                "execution_status": s.execution_status,
+                "exit_code": s.exit_code,
+                "execution_output": s.execution_output,
+                "executed_at": s.executed_at.isoformat() if s.executed_at else None,
+                "approved_at": s.approved_at.isoformat() if s.approved_at else None,
+                "created_at": s.created_at.isoformat() if s.created_at else None,
+            }
+            for s in scripts
+        ],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
+
+
+@router.get(
     "/remediation-scripts/{script_id}",
     dependencies=[Depends(require_permission("remediation:create"))],
 )

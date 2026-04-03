@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import {
   ArrowLeft, RefreshCw, Shield, AlertTriangle,
-  Network, Bug, Sparkles, Wrench, Users,
+  Network, Bug, Sparkles, Wrench, Users, Brain, Loader2, CheckCircle,
 } from 'lucide-react';
 import {
   PieChart, Pie, Cell, Legend, Tooltip, ResponsiveContainer,
@@ -19,9 +19,13 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Separator } from '@/components/ui/separator';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { SeverityBadge } from '@/components/ui/severity-badge';
+import {
+  Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle,
+} from '@/components/ui/dialog';
 import scansService from '../../lib/services/scansService';
 import vulnerabilitiesService from '../../lib/services/vulnerabilitiesService';
 import groupsService from '../../lib/services/groupsService';
+import remediationService from '../../lib/services/remediationService';
 
 const WS_BASE =
   typeof window !== 'undefined'
@@ -44,6 +48,11 @@ export default function ScanDetailsPage() {
   const [progress, setProgress] = useState(null);
   const [selectedVulnIds, setSelectedVulnIds] = useState([]);
   const [actionLoading, setActionLoading] = useState(false);
+
+  // Analyse IA batch
+  const [analyzeDialogOpen, setAnalyzeDialogOpen] = useState(false);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [analyzeError, setAnalyzeError] = useState(null);
 
   useEffect(() => {
     if (!id) return;
@@ -134,6 +143,22 @@ export default function ScanDetailsPage() {
       alert('Erreur génération scripts: ' + (err.message || 'inconnue'));
     } finally {
       setActionLoading(false);
+    }
+  };
+
+  const handleAnalyzeBatch = async () => {
+    if (!id) return;
+    setAnalyzing(true);
+    setAnalyzeError(null);
+    try {
+      const result = await remediationService.startBatchAnalysis(id);
+      setAnalyzeDialogOpen(false);
+      // Rediriger vers la page du plan de remédiation
+      router.push(`/remediation/plan/${id}?analysis_id=${result.analysis_id}`);
+    } catch (err) {
+      setAnalyzeError(err?.message || "Erreur lors du lancement de l'analyse");
+    } finally {
+      setAnalyzing(false);
     }
   };
 
@@ -233,6 +258,36 @@ export default function ScanDetailsPage() {
                 );
               })}
             </div>
+
+            {/* ── AI Analysis CTA (scan complété seulement) ── */}
+            {scan.status === 'completed' && (scan.vulnerabilities_found ?? 0) > 0 && (
+              <Card className="border-2 border-primary/30 bg-primary/5">
+                <CardContent className="pt-6">
+                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                    <div className="flex items-start gap-3">
+                      <div className="p-2 rounded-lg bg-primary/10">
+                        <Brain className="h-6 w-6 text-primary" />
+                      </div>
+                      <div>
+                        <h3 className="font-semibold">Analyse IA & Remédiation automatique</h3>
+                        <p className="text-sm text-muted-foreground mt-0.5">
+                          Notre IA va analyser les {scan.vulnerabilities_found} vulnérabilités et générer un plan
+                          de remédiation exécutable automatiquement via SSH.
+                        </p>
+                      </div>
+                    </div>
+                    <Button
+                      size="lg"
+                      className="shrink-0"
+                      onClick={() => setAnalyzeDialogOpen(true)}
+                    >
+                      <Sparkles className="mr-2 h-4 w-4" />
+                      Analyser avec l&apos;IA
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
 
             {/* Charts + Info */}
             <div className="grid gap-4 md:grid-cols-2">
@@ -371,6 +426,48 @@ export default function ScanDetailsPage() {
           </>
         )}
       </div>
+
+      {/* ── Dialog: Confirmer l'analyse IA batch ── */}
+      <Dialog open={analyzeDialogOpen} onOpenChange={setAnalyzeDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Brain className="h-5 w-5 text-primary" />
+              Analyse IA — {scan?.vulnerabilities_found ?? 0} vulnérabilités
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 py-2 text-sm text-muted-foreground">
+            <p>Notre IA va analyser toutes les vulnérabilités et générer un plan de remédiation.</p>
+            <div className="space-y-1.5">
+              {[
+                'Évaluation du contexte et de l\'impact',
+                'Priorisation des risques métier',
+                'Dépendances & prérequis',
+                'Génération des étapes de remédiation',
+                'Procédures de rollback',
+              ].map((item) => (
+                <div key={item} className="flex items-center gap-2">
+                  <CheckCircle className="h-3.5 w-3.5 text-primary shrink-0" />
+                  <span>{item}</span>
+                </div>
+              ))}
+            </div>
+            <p className="font-medium text-foreground">Durée estimée : ~2 minutes</p>
+            {analyzeError && (
+              <p className="text-red-600 bg-red-50 dark:bg-red-950/30 p-2 rounded text-xs">{analyzeError}</p>
+            )}
+          </div>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setAnalyzeDialogOpen(false)}>Annuler</Button>
+            <Button onClick={handleAnalyzeBatch} disabled={analyzing}>
+              {analyzing
+                ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Lancement...</>
+                : <><Sparkles className="mr-2 h-4 w-4" />Lancer l&apos;analyse</>
+              }
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

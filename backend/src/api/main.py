@@ -42,6 +42,7 @@ from . import dependencies
 from .dependencies import get_database, get_supervisor, get_current_user
 from .api_v1 import router as api_v1_router
 from .routes.scans import ws_router as scans_ws_router
+from .routes.remediation import ws_router as remediation_ws_router
 from .scan_v2 import router as scan_v2_router, ws_router as scan_v2_ws_router
 from .auth import router as auth_router
 
@@ -167,9 +168,10 @@ def create_app() -> FastAPI:
     # Routes API v2 (scan historique)
     app.include_router(scan_v2_router)
 
-    # WebSockets pour la progression des scans
-    app.include_router(scan_v2_ws_router)  # historique
-    app.include_router(scans_ws_router)    # nouveau basé BDD/Celery
+    # WebSockets pour la progression des scans et de la remédiation
+    app.include_router(scan_v2_ws_router)      # historique
+    app.include_router(scans_ws_router)        # scans basés BDD/Celery
+    app.include_router(remediation_ws_router)  # progression remédiation
 
     # Configuration OpenAPI personnalisée
     setup_openapi(app)
