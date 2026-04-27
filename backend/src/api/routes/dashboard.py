@@ -24,6 +24,8 @@ from src.database.models import Asset, Scan, Vulnerability
 from src.api.dependencies import get_current_user
 from src.services.security_score import SecurityScoreCalculator
 from src.services.risk_calculator import AssetRiskCalculator
+from src.services.compliance import ComplianceCalculator
+from src.services.mttr_calculator import MTTRCalculator
 from src.utils.logger import setup_logger
 
 
@@ -453,5 +455,86 @@ def get_top_vulnerabilities_by_assets(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Erreur lors du calcul du top vulnérabilités",
+        )
+
+
+# ============================================================================
+# ENDPOINT : Compliance Status (PCI DSS, ISO 27001, SOC 2, GDPR)
+# ============================================================================
+
+
+@router.get("/compliance-status")
+def get_compliance_status(
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+) -> List[Dict[str, Any]]:
+    """
+    Retourne le statut de conformité pour les principaux frameworks.
+
+    Response:
+    [
+        {
+            "framework": "PCI DSS",
+            "status": "NON_COMPLIANT",
+            "score": 42,
+            "issues": ["12 vulnérabilités CRITICAL"],
+            "controls_passed": 1,
+            "controls_total": 4
+        },
+        ...
+    ]
+    """
+    try:
+        org_id = current_user["organization_id"]
+        calculator = ComplianceCalculator(db)
+        return calculator.get_compliance_status(org_id)
+    except Exception as e:
+        logger.error("Erreur compliance status: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Erreur lors du calcul de la conformité",
+        )
+
+
+# ============================================================================
+# ENDPOINT : MTTR (Mean Time to Remediate)
+# ============================================================================
+
+
+@router.get("/mttr")
+def get_mttr(
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+) -> Dict[str, Any]:
+    """
+    Retourne le MTTR global et par sévérité, comparé aux benchmarks industrie.
+
+    Response:
+    {
+        "overall_mttr_days": 28.3,
+        "by_severity": [
+            {
+                "severity": "CRITICAL",
+                "mttr_days": 12.5,
+                "benchmark_days": 7,
+                "status": "ABOVE_BENCHMARK",
+                "resolved_count": 45
+            },
+            ...
+        ],
+        "total_resolved": 234,
+        "benchmark_comparison": "ABOVE_BENCHMARK",
+        "industry_benchmarks": {"CRITICAL": 7, "HIGH": 30, ...}
+    }
+    """
+    try:
+        org_id = current_user["organization_id"]
+        calculator = MTTRCalculator(db)
+        return calculator.get_overall_mttr(org_id)
+    except Exception as e:
+        logger.error("Erreur MTTR: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Erreur lors du calcul du MTTR",
         )
 

@@ -33,7 +33,7 @@ def enrich_vulnerabilities_daily():
     enrichment = VulnerabilityEnrichment()
 
     try:
-        organizations = db.query(Organization).filter(Organization).all()
+        organizations = db.query(Organization).all()
         total_stats = {"total": 0, "enriched": 0, "failed": 0}
 
         for org in organizations:

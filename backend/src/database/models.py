@@ -865,6 +865,54 @@ class ValidationScan(Base):
     )
 
 
+# ============================================================================
+# TABLE 15: REMEDIATION_PROJECTS (tracking projets de remédiation)
+# ============================================================================
+
+
+class RemediationProject(Base):
+    __tablename__ = "remediation_projects"
+
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text)
+
+    status: Mapped[str] = mapped_column(String(50), nullable=False, default="open")
+    priority: Mapped[str] = mapped_column(String(20), nullable=False, default="medium")
+
+    due_date: Mapped[Optional[datetime]] = mapped_column(DateTime)
+
+    # Progression (calculée ou manuelle)
+    total_vulns: Mapped[int] = mapped_column(Integer, default=0)
+    resolved_vulns: Mapped[int] = mapped_column(Integer, default=0)
+
+    assigned_to: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id")
+    )
+
+    # Relationships
+    organization: Mapped["Organization"] = relationship("Organization")
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('open', 'in_progress', 'completed', 'cancelled')",
+            name="check_project_status",
+        ),
+        CheckConstraint(
+            "priority IN ('critical', 'high', 'medium', 'low')",
+            name="check_project_priority",
+        ),
+        Index("idx_project_org", "organization_id"),
+        Index("idx_project_status", "status"),
+        Index("idx_project_priority", "priority"),
+    )
+
+
 __all__ = [
     "Base",
     "Organization",
@@ -881,5 +929,6 @@ __all__ = [
     "RemediationPlan",
     "RemediationExecution",
     "ValidationScan",
+    "RemediationProject",
 ]
 

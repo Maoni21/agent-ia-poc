@@ -42,6 +42,38 @@ export const dashboardService = {
     });
     return response.data;
   },
+
+  // Statut de conformité (PCI DSS, ISO 27001, SOC 2, GDPR)
+  getComplianceStatus: async () => {
+    const response = await api.get('/api/v1/dashboard/compliance-status');
+    return response.data;
+  },
+
+  // MTTR (Mean Time to Remediate) + benchmarks industrie
+  getMTTR: async () => {
+    const response = await api.get('/api/v1/dashboard/mttr');
+    return response.data;
+  },
+
+  // Projets de remédiation
+  getRemediationProjects: async () => {
+    const response = await api.get('/api/v1/remediation-projects');
+    return response.data;
+  },
+
+  createRemediationProject: async (data) => {
+    const response = await api.post('/api/v1/remediation-projects', data);
+    return response.data;
+  },
+
+  updateRemediationProject: async (id, data) => {
+    const response = await api.put(`/api/v1/remediation-projects/${id}`, data);
+    return response.data;
+  },
+
+  deleteRemediationProject: async (id) => {
+    await api.delete(`/api/v1/remediation-projects/${id}`);
+  },
 };
 
 export default dashboardService;
