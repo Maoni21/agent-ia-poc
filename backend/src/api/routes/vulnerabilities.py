@@ -68,12 +68,27 @@ def _serialize_vulnerability(v: Vulnerability) -> Dict[str, Any]:
     """
     Normalise un objet Vulnerability SQLAlchemy vers un dict exploitable par le frontend.
     """
+    # Récupérer les infos de l'asset via la relation scan → asset
+    try:
+        asset = v.scan.asset if v.scan else None
+        asset_id = str(asset.id) if asset else None
+        asset_hostname = asset.hostname if asset else None
+        asset_ip = str(asset.ip_address) if asset else None
+    except Exception:
+        asset_id = None
+        asset_hostname = None
+        asset_ip = None
+
     return {
         # Identifiants
         "id": str(v.id),
         "vulnerability_id": str(v.id),
         "scan_id": str(v.scan_id),
         "organization_id": str(v.organization_id),
+        # Asset lié
+        "asset_id": asset_id,
+        "asset_hostname": asset_hostname,
+        "asset_ip": asset_ip,
         # Infos CVE / titre
         "cve_id": v.cve_id,
         "name": v.title,
@@ -107,6 +122,13 @@ def _serialize_vulnerability(v: Vulnerability) -> Dict[str, Any]:
         "references": v.references or [],
         "exploit_available": v.exploit_available,
         "exploit_maturity": v.exploit_maturity,
+        # Enrichissement externe (NVD + EPSS + CISA KEV)
+        "enriched_data": v.enriched_data or {},
+        "epss_score": float(v.epss_score) if v.epss_score is not None else None,
+        "epss_percentile": float(v.epss_percentile) if v.epss_percentile is not None else None,
+        "cisa_kev": v.cisa_kev if hasattr(v, "cisa_kev") else False,
+        "cwe_ids": v.cwe_ids or [],
+        "published_date": v.published_date.isoformat() if getattr(v, "published_date", None) else None,
         # Métadonnées
         "first_detected_at": v.first_detected_at.isoformat() if v.first_detected_at else None,
         "last_seen_at": v.last_seen_at.isoformat() if v.last_seen_at else None,

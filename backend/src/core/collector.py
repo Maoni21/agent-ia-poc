@@ -256,6 +256,19 @@ class Collector:
         try:
             logger.info(f"Début scan {scan_id} - cible: {target}, type: {scan_type}")
 
+            # ── Vérification rapide de connectivité (évite 5 min d'attente) ──
+            try:
+                ping_result = subprocess.run(
+                    ["ping", "-c", "1", "-W", "3", target],
+                    capture_output=True, timeout=8
+                )
+                host_reachable = ping_result.returncode == 0
+            except (subprocess.TimeoutExpired, FileNotFoundError):
+                host_reachable = True  # ping indispo → on laisse nmap décider
+
+            if not host_reachable:
+                logger.warning(f"Ping échoué sur {target} – hôte potentiellement inaccessible, scan quand même lancé")
+
             if progress_callback:
                 progress_callback(10)
 

@@ -121,6 +121,26 @@ def _create_vulnerability_from_info(db: Session, scan: Scan, info: Vulnerability
     if confidence_value not in {"high", "medium", "low"}:
         confidence_value = "medium"
 
+    # Extraire les données de localisation de détection (nmap script output)
+    detection_loc = info.detection_location or {}
+    version_info = detection_loc.get("version_info") or {}
+
+    # Version du logiciel détectée et version corrigée (depuis l'output NSE)
+    affected_version = version_info.get("detected_version") or None
+    fixed_version = version_info.get("required_version") or None
+
+    # Protocole réel (tcp/udp) depuis la localisation nmap
+    protocol = detection_loc.get("protocol", "tcp")
+
+    # Exploit détecté si le script nmap est de type exploit
+    exploit_available = bool(
+        "exploit" in (info.detection_method or "").lower()
+        or "exploit" in (detection_loc.get("script_name") or "").lower()
+    )
+
+    # Nom de service lisible (ex: "http", "ssh", "smb")
+    service = (detection_loc.get("service") or info.affected_service or "").strip() or None
+
     v = Vulnerability(
         id=uuid.uuid4(),
         scan_id=scan.id,
@@ -131,13 +151,105 @@ def _create_vulnerability_from_info(db: Session, scan: Scan, info: Vulnerability
         severity=info.severity.upper(),
         cvss_score=info.cvss_score,
         affected_package=info.affected_service,
+        affected_version=affected_version,
+        fixed_version=fixed_version,
         port=info.affected_port,
-        protocol="tcp",
+        protocol=protocol,
+        service=service,
         detection_method=info.detection_method,
         confidence=confidence_value,
         references=[{"type": "reference", "url": r} for r in (info.references or [])],
+        exploit_available=exploit_available,
+        detection_location=detection_loc,
     )
     db.add(v)
+
+
+async def _enrich_vulnerabilities(db: Session, vulns: list[Vulnerability]) -> None:
+    """
+    Enrichit les vulnérabilités d'un scan depuis NVD, EPSS et CISA KEV.
+    - Met à jour cvss_vector, epss_score, cisa_kev, enriched_data, description (si officielle > nmap)
+    - Best-effort : les erreurs individuelles sont ignorées pour ne pas bloquer
+    """
+    from src.core.enricher import enrich_cve_batch
+    import os
+
+    cve_ids = [v.cve_id for v in vulns if v.cve_id]
+    if not cve_ids:
+        return
+
+    nvd_api_key = os.environ.get("NVD_API_KEY")  # Optionnel – augmente le rate limit x10
+    logger.info("Enrichissement externe de %d CVE…", len(cve_ids))
+
+    enrichment_map = await enrich_cve_batch(cve_ids, nvd_api_key=nvd_api_key)
+
+    for v in vulns:
+        if not v.cve_id:
+            continue
+        data = enrichment_map.get(v.cve_id.upper())
+        if not data:
+            continue
+
+        try:
+            # Stocker le bloc complet d'enrichissement
+            v.enriched_data = data
+
+            # CVSS vector (toujours manquant depuis nmap)
+            if data.get("cvss_vector"):
+                v.cvss_vector = data["cvss_vector"]
+
+            # Score NVD officiel si nmap n'en avait pas trouvé
+            if not v.cvss_score and data.get("nvd_cvss_score"):
+                v.cvss_score = data["nvd_cvss_score"]
+
+            # Description officielle NVD (bien plus complète que 2 lignes nmap)
+            nvd_desc = data.get("description", "")
+            if nvd_desc and len(nvd_desc) > len(v.description or ""):
+                v.description = nvd_desc
+
+            # EPSS
+            if data.get("epss_score") is not None:
+                v.epss_score = data["epss_score"]
+            if data.get("epss_percentile") is not None:
+                v.epss_percentile = data["epss_percentile"]
+
+            # CISA KEV → exploit confirmé en production
+            if data.get("cisa_kev"):
+                v.cisa_kev = True
+                v.exploit_available = True
+                v.exploit_maturity = "in_the_wild"
+
+            # CWE IDs
+            if data.get("cwe_ids"):
+                v.cwe_ids = data["cwe_ids"]
+
+            # Références de patch (enrichir la liste existante)
+            patch_urls = data.get("patch_references", [])
+            if patch_urls:
+                existing_urls = {r.get("url") for r in (v.references or [])}
+                new_refs = [
+                    {"type": "patch", "url": url}
+                    for url in patch_urls
+                    if url not in existing_urls
+                ]
+                if new_refs:
+                    v.references = (v.references or []) + new_refs
+
+            # Date de publication officielle
+            if data.get("published_date"):
+                try:
+                    v.published_date = datetime.fromisoformat(
+                        data["published_date"].replace("Z", "+00:00")
+                    ).replace(tzinfo=None)
+                except Exception:
+                    pass
+
+            db.add(v)
+        except Exception as exc:
+            logger.warning("Erreur enrichissement vuln %s (%s) : %s", v.id, v.cve_id, exc)
+
+    db.commit()
+    logger.info("Enrichissement terminé pour %d vulnérabilités", len(vulns))
 
 
 @celery_app.task(name="execute_scan", bind=True)
@@ -177,15 +289,43 @@ def execute_scan(self, scan_id: str) -> dict[str, Any]:
 
         async def _run_scan() -> ScanResult:
             collector = Collector()
+            # Timeout Python aligné sur le type de scan pour éviter
+            # que asyncio.wait_for tue nmap prématurément.
+            _timeouts = {
+                "quick": 900,       # 15 min
+                "full": 2400,       # 40 min
+                "stealth": 1800,    # 30 min
+                "compliance": 1200, # 20 min
+                "custom": 1200,     # 20 min
+            }
+            _timeout = _timeouts.get(scan.scan_type or "full", 1200)
             return await collector.scan_target(
                 target=str(asset.ip_address),
                 scan_type=scan.scan_type or "full",
+                timeout=_timeout,
                 progress_callback=progress_callback,
             )
 
         result: ScanResult = asyncio.run(_run_scan())
 
         _persist_scan_result(db, scan, result)
+
+        # ── Enrichissement externe (NVD + EPSS + CISA KEV) ─────────────────
+        # On relance un event loop séparé pour l'enrichissement asynchrone.
+        vulns_with_cve = (
+            db.query(Vulnerability)
+            .filter(
+                Vulnerability.scan_id == scan.id,
+                Vulnerability.cve_id.isnot(None),
+            )
+            .all()
+        )
+        if vulns_with_cve:
+            try:
+                asyncio.run(_enrich_vulnerabilities(db, vulns_with_cve))
+            except Exception as enrich_err:
+                # L'enrichissement est best-effort : un échec ne fait pas échouer le scan
+                logger.warning("Enrichissement partiel ou échoué pour scan %s : %s", scan_id, enrich_err)
 
         logger.info("Celery: scan %s terminé avec succès", scan_id)
         return {"status": "completed", "scan_id": scan_id}

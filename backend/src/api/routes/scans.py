@@ -195,20 +195,43 @@ def get_scan(
         .all()
     )
 
+    # Infos de l'asset associé
+    try:
+        asset = scan.asset
+        asset_ip = str(asset.ip_address) if asset else None
+        asset_hostname = asset.hostname if asset else None
+    except Exception:
+        asset_ip = None
+        asset_hostname = None
+
+    # Services extraits du scan_results (déjà collectés par nmap, jamais exposés)
+    scan_results_data = scan.scan_results or {}
+    services_list = scan_results_data.get("services", [])
+    open_ports_list = scan_results_data.get("open_ports", [])
+
     return {
         "id": str(scan.id),
         "asset_id": str(scan.asset_id),
+        "asset_ip": asset_ip,
+        "asset_hostname": asset_hostname,
         "scan_type": scan.scan_type,
         "status": scan.status,
         "progress": scan.progress,
         "started_at": scan.started_at.isoformat() if scan.started_at else None,
         "completed_at": scan.completed_at.isoformat() if scan.completed_at else None,
+        "duration_seconds": scan.duration_seconds,
         "vulnerabilities_found": scan.vulnerabilities_found,
         "critical_count": scan.critical_count,
         "high_count": scan.high_count,
         "medium_count": scan.medium_count,
         "low_count": scan.low_count,
         "info_count": scan.info_count,
+        # Données réseau collectées
+        "ports_scanned": scan.open_ports_count or len(open_ports_list) or 0,
+        "services_found": len(services_list),
+        "open_ports": open_ports_list,
+        "services": services_list,
+        "nmap_output": scan.nmap_output,
         "vulnerabilities": [
             {
                 "id": str(v.id),
@@ -218,10 +241,13 @@ def get_scan(
                 "severity": v.severity,
                 "cvss_score": float(v.cvss_score) if v.cvss_score is not None else None,
                 "port": v.port,
+                "protocol": v.protocol,
                 "service": v.service,
+                "affected_version": v.affected_version,
                 "status": v.status,
                 "ai_analyzed": v.ai_analyzed,
                 "ai_priority_score": v.ai_priority_score,
+                "exploit_available": v.exploit_available,
             }
             for v in vulns
         ],

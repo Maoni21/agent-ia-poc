@@ -134,7 +134,7 @@ def create_asset(
             detail="Impossible de créer l'asset (contrainte en base).",
         )
 
-    return AssetResponse.from_orm(asset)
+    return AssetResponse.model_validate(asset)
 
 
 @router.get(
@@ -148,7 +148,7 @@ def get_asset(
     """
     Détails d'un asset (vérifie automatiquement le tenant).
     """
-    return AssetResponse.from_orm(asset)
+    return AssetResponse.model_validate(asset)
 
 
 @router.put(
@@ -217,7 +217,7 @@ def update_asset(
     db.commit()
     db.refresh(asset)
 
-    return AssetResponse.from_orm(asset)
+    return AssetResponse.model_validate(asset)
 
 
 @router.delete(

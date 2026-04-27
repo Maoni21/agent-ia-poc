@@ -8,6 +8,7 @@ qui expose l'API REST pour interagir avec l'agent IA de cybersécurité.
 import time
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, HTTPException
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
@@ -269,9 +270,36 @@ def setup_error_handlers(app: FastAPI):
             }
         )
 
+    @app.exception_handler(RequestValidationError)
+    async def request_validation_exception_handler(request: Request, exc: RequestValidationError):
+        """Journalise les erreurs de validation Pydantic sur les requêtes entrantes."""
+        import logging
+        logging.getLogger("src.api.main").warning(
+            "422 RequestValidationError on %s %s: %s",
+            request.method, request.url.path, exc.errors()
+        )
+        return JSONResponse(
+            status_code=422,
+            content={
+                "error": {
+                    "code": APIErrorCodes.VALIDATION_ERROR,
+                    "message": "Données de la requête invalides",
+                    "details": exc.errors(),
+                    "type": "request_validation_error"
+                },
+                "success": False,
+                "timestamp": time.time()
+            }
+        )
+
     @app.exception_handler(ValueError)
     async def validation_exception_handler(request: Request, exc: ValueError):
-        """Gestionnaire pour les erreurs de validation"""
+        """Gestionnaire pour les erreurs de validation métier (ValueError)."""
+        import logging
+        logging.getLogger("src.api.main").warning(
+            "422 ValueError on %s %s: %s",
+            request.method, request.url.path, str(exc)
+        )
         return JSONResponse(
             status_code=422,
             content={

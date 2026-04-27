@@ -2,7 +2,7 @@ import Head from 'next/head';
 import { useRouter } from 'next/router';
 import { useState, useEffect } from 'react';
 import {
-  Search, Download, AlertTriangle, Bug, Sparkles, Wrench, Filter,
+  Search, AlertTriangle, Bug, Sparkles, Wrench, Server,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -16,6 +16,7 @@ import {
   SelectTrigger, SelectValue,
 } from '@/components/ui/select';
 import vulnerabilitiesService from '../lib/services/vulnerabilitiesService';
+import assetsService from '../lib/services/assetsService';
 
 const SEVERITY_COLORS = {
   CRITICAL: { bg: 'bg-red-600', light: 'bg-red-50 dark:bg-red-950', border: 'border-red-200 dark:border-red-800' },
@@ -32,8 +33,17 @@ export default function VulnerabilitiesPage() {
   const [searchTerm, setSearchTerm] = useState('');
   const [severityFilter, setSeverityFilter] = useState('all');
   const [falsePositiveFilter, setFalsePositiveFilter] = useState('all');
+  const [assetFilter, setAssetFilter] = useState('all');
+  const [assets, setAssets] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+
+  // Load assets for the filter dropdown
+  useEffect(() => {
+    assetsService.getAssets().then((data) => {
+      setAssets(data || []);
+    }).catch(() => {});
+  }, []);
 
   const loadVulnerabilities = async () => {
     setLoading(true);
@@ -42,6 +52,7 @@ export default function VulnerabilitiesPage() {
       const data = await vulnerabilitiesService.getVulnerabilities({
         limit: 200,
         severity: severityFilter !== 'all' ? severityFilter : undefined,
+        asset_id: assetFilter !== 'all' ? assetFilter : undefined,
       });
       const vulns = data.vulnerabilities || [];
       setVulnerabilities(vulns);
@@ -52,7 +63,7 @@ export default function VulnerabilitiesPage() {
     }
   };
 
-  useEffect(() => { loadVulnerabilities(); }, [severityFilter]);
+  useEffect(() => { loadVulnerabilities(); }, [severityFilter, assetFilter]);
 
   useEffect(() => {
     let base = [...vulnerabilities];
@@ -125,10 +136,6 @@ export default function VulnerabilitiesPage() {
             </p>
           </div>
           <div className="flex gap-2">
-            <Button variant="outline" onClick={handleExportCsv}>
-              <Download className="mr-2 h-4 w-4" />
-              Export CSV
-            </Button>
             <Button variant="outline" onClick={handleAnalyzeAll} disabled={!filteredVulnerabilities.length}>
               <Sparkles className="mr-2 h-4 w-4" />
               Analyser IA
@@ -179,6 +186,19 @@ export default function VulnerabilitiesPage() {
               onChange={(e) => setSearchTerm(e.target.value)}
             />
           </div>
+          <Select value={assetFilter} onValueChange={setAssetFilter}>
+            <SelectTrigger className="w-[200px]">
+              <SelectValue placeholder="Tous les assets" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Tous les assets</SelectItem>
+              {assets.map((a) => (
+                <SelectItem key={a.id} value={a.id}>
+                  {a.hostname || a.ip_address}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
           <Select value={severityFilter} onValueChange={setSeverityFilter}>
             <SelectTrigger className="w-[140px]">
               <SelectValue placeholder="Sévérité" />
@@ -201,10 +221,10 @@ export default function VulnerabilitiesPage() {
               <SelectItem value="false_positive">Faux positifs</SelectItem>
             </SelectContent>
           </Select>
-          {(searchTerm || severityFilter !== 'all' || falsePositiveFilter !== 'all') && (
+          {(searchTerm || severityFilter !== 'all' || falsePositiveFilter !== 'all' || assetFilter !== 'all') && (
             <Button
               variant="ghost"
-              onClick={() => { setSearchTerm(''); setSeverityFilter('all'); setFalsePositiveFilter('all'); }}
+              onClick={() => { setSearchTerm(''); setSeverityFilter('all'); setFalsePositiveFilter('all'); setAssetFilter('all'); }}
             >
               Réinitialiser
             </Button>
@@ -277,11 +297,22 @@ export default function VulnerabilitiesPage() {
                           {vuln.cvss_score != null && (
                             <span>CVSS: <span className="font-medium">{vuln.cvss_score}</span></span>
                           )}
-                          {vuln.affected_service && (
-                            <span>Service: <span className="font-medium">{vuln.affected_service}</span></span>
-                          )}
                           {vuln.port && (
                             <span>Port: <span className="font-mono font-medium">{vuln.port}</span></span>
+                          )}
+                          {(vuln.asset_hostname || vuln.asset_ip) && (
+                            <span className="flex items-center gap-1">
+                              <Server className="h-3 w-3" />
+                              <span
+                                className="font-medium hover:underline cursor-pointer"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (vuln.asset_id) router.push(`/assets/${vuln.asset_id}`);
+                                }}
+                              >
+                                {vuln.asset_hostname || vuln.asset_ip}
+                              </span>
+                            </span>
                           )}
                         </div>
                       </div>

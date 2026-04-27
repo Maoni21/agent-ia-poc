@@ -2,14 +2,16 @@ import { api } from './api';
 
 // Service dédié aux vulnérabilités
 export const vulnerabilitiesService = {
-  // Liste des vulnérabilités (adaptera l'URL quand un endpoint dédié existera)
-  getVulnerabilities: async ({ limit = 100, severity, status, search } = {}) => {
+  // Liste des vulnérabilités avec filtres optionnels
+  getVulnerabilities: async ({ limit = 100, severity, status, search, scan_id, asset_id } = {}) => {
     const response = await api.get('/api/v1/vulnerabilities', {
       params: {
         limit,
         severity: severity || undefined,
         status: status || undefined,
         search: search || undefined,
+        scan_id: scan_id || undefined,
+        asset_id: asset_id || undefined,
       },
     });
     return response.data;

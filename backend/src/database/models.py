@@ -389,6 +389,15 @@ class Vulnerability(Base):
     exploit_available: Mapped[bool] = mapped_column(Boolean, default=False)
     exploit_maturity: Mapped[Optional[str]] = mapped_column(String(50))
 
+    # Enrichissement externe (NVD / EPSS / CISA KEV)
+    enriched_data: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    detection_location: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    epss_score: Mapped[Optional[float]] = mapped_column(DECIMAL(5, 4), nullable=True)
+    epss_percentile: Mapped[Optional[float]] = mapped_column(DECIMAL(5, 4), nullable=True)
+    cisa_kev: Mapped[bool] = mapped_column(Boolean, default=False)
+    published_date: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    cwe_ids: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True)
+
     # Metadata
     first_detected_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow

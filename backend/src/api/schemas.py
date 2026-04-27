@@ -303,14 +303,30 @@ class AssetUpdate(BaseModel):
     )
 
 
-class AssetResponse(AssetBase):
+class AssetResponse(BaseModel):
+    """Réponse publique pour un asset – ne contient JAMAIS les credentials SSH."""
+
     id: str
+    hostname: Optional[str] = None
+    ip_address: str
+    mac_address: Optional[str] = None
+    asset_type: AssetType = AssetType.SERVER
+    os: Optional[str] = None
+    os_version: Optional[str] = None
+    environment: Optional[EnvironmentType] = None
+    business_criticality: BusinessCriticality = BusinessCriticality.MEDIUM
+    datacenter: Optional[str] = None
+    cloud_provider: Optional[str] = None
+    region: Optional[str] = None
+    tags: Optional[List[str]] = Field(default_factory=list)
+    notes: Optional[str] = None
+    is_active: bool = True
+    monitoring_enabled: bool = True
+    last_seen: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
-    last_seen: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = {"from_attributes": True}
 
 
 # === MODÈLES DE VULNÉRABILITÉ ===
