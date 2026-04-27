@@ -19,6 +19,8 @@ celery_app = Celery(
     backend=CELERY_RESULT_BACKEND,
 )
 
+from celery.schedules import crontab
+
 celery_app.conf.update(
     task_serializer="json",
     accept_content=["json"],
@@ -28,7 +30,14 @@ celery_app.conf.update(
     include=[
         "src.workers.scan_worker",
         "src.workers.executor_worker",
+        "src.workers.enrichment_worker",
     ],
+    beat_schedule={
+        "enrich-vulnerabilities-daily": {
+            "task": "enrich_vulnerabilities_daily",
+            "schedule": crontab(hour=2, minute=0),
+        },
+    },
 )
 
 __all__ = ["celery_app"]

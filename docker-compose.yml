@@ -35,6 +35,8 @@ services:
       - ./config:/app/config
     environment:
       - DATABASE_URL=postgresql://vulnagent:${POSTGRES_PASSWORD:-password}@db:5432/vulnerability_db
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - AI_PROVIDER=${AI_PROVIDER:-anthropic}
@@ -43,10 +45,75 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     networks:
       - app-network
     restart: unless-stopped
     command: python -m uvicorn src.api.main:app --host 0.0.0.0 --port 8000 --reload
+
+  # Redis (broker Celery)
+  redis:
+    image: redis:7-alpine
+    container_name: vulnerability-agent-redis
+    ports:
+      - "6379:6379"
+    networks:
+      - app-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Celery Worker (enrichissement vulnérabilités)
+  celery-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: vulnerability-agent-celery
+    volumes:
+      - ./backend:/app
+      - ./data:/app/data
+      - ./config:/app/config
+    environment:
+      - DATABASE_URL=postgresql://vulnagent:${POSTGRES_PASSWORD:-password}@db:5432/vulnerability_db
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - AI_PROVIDER=${AI_PROVIDER:-anthropic}
+      - PYTHONPATH=/app/src
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - app-network
+    restart: unless-stopped
+    command: celery -A src.workers.celery_app.celery_app worker --loglevel=info -Q celery
+
+  # Celery Beat (planificateur tâches quotidiennes)
+  celery-beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: vulnerability-agent-celery-beat
+    volumes:
+      - ./backend:/app
+    environment:
+      - DATABASE_URL=postgresql://vulnagent:${POSTGRES_PASSWORD:-password}@db:5432/vulnerability_db
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - PYTHONPATH=/app/src
+    depends_on:
+      - redis
+      - celery-worker
+    networks:
+      - app-network
+    restart: unless-stopped
+    command: celery -A src.workers.celery_app.celery_app beat --loglevel=info
 
   # Frontend Next.js
   frontend:
@@ -66,6 +133,7 @@ services:
       - NODE_ENV=development
     depends_on:
       - backend
+      - redis
     networks:
       - app-network
     restart: unless-stopped
